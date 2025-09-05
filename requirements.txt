@@ -1,0 +1,25 @@
+# Core RL stack
+stable-baselines3==2.4.0
+sb3_contrib==2.4.0
+gymnasium==0.29.1
+rllte-core
+faiss-cpu
+
+# Basic ML/Math stack
+numpy==1.26.4
+scipy==1.13.1
+pandas==2.2.2
+matplotlib==3.6.0
+
+# Logging and CLI tools
+tqdm==4.67.1
+colorama==0.4.6
+boto3
+
+# Torch stack
+torch==2.3.1
+torchvision==0.18.1
+
+# Optional GNN support
+torch-geometric==2.6.1
+
