@@ -1,0 +1,66 @@
+# -------------------------
+# Python
+# -------------------------
+__pycache__/
+*.py[cod]
+*.so
+*.egg
+*.egg-info/
+*.pyo
+*.pyd
+
+# -------------------------
+# Jupyter
+# -------------------------
+.ipynb_checkpoints/
+*.ipynb_save
+*.ipynb_checkpoints
+
+# -------------------------
+# Data / Experiments
+# -------------------------
+data/
+!equation_templates/        # keep training/testing eqn templates
+*.csv
+*.pkl
+*.json
+*.zip
+*.npz
+*.npy
+*.pt
+*.pth
+*.h5
+
+# -------------------------
+# Logs / Outputs
+# -------------------------
+*.log
+*.out
+*.err
+*.txt
+.DS_Store
+
+# -------------------------
+# Virtual Envs
+# -------------------------
+venv/
+.env/
+.venv/
+.mamba/
+.conda/
+*.swp
+
+# -------------------------
+# IDEs
+# -------------------------
+.vscode/
+.idea/
+*.sublime-workspace
+*.sublime-project
+
+# -------------------------
+# OS-specific
+# -------------------------
+.DS_Store
+Thumbs.db
+
