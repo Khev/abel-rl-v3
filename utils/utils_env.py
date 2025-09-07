@@ -541,6 +541,22 @@ def make_actions_cache(lhs, rhs, actions_fixed, action_dim, cache):
 
 
 def get_ordered_sub_expressions(expr):
+    if expr == 0:
+        return []
+    sub_expressions = set()
+    queue = deque([expr])            # O(1) popleft
+    while queue:
+        e = queue.popleft()
+        if e not in sub_expressions and 1/e not in sub_expressions and e not in (-1, 0, 1):
+            sub_expressions.add(e)
+            if not e.is_Atom:
+                queue.extend(e.args)
+    sub_expressions.discard(expr)
+    #return sorted(sub_expressions, key=lambda x: x.sort_key())   #UNCOMMENT THIS ONE
+    return sorted(sub_expressions, key=lambda x: (len(str(x)), str(x)))
+
+
+def get_ordered_sub_expressions_old(expr):
     """Extracts all unique sub-expressions from a given symbolic expression, 
     excluding the full expression itself, and returns them in a fixed order.
     """

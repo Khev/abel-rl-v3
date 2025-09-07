@@ -226,14 +226,14 @@ class multiEqn(Env):
         # Update arrays
         self.sample_counts[self.main_eqn] += 1
         if is_solved:
-            self.solve_counts[self.main_eqn] += 1
             if self.map_constants_history:
                 for m in reversed(self.map_constants_history):
                     rhs_new = rhs_new.subs(m)
-                    self.main_eqn = self.main_eqn_original
+                self.main_eqn = self.main_eqn_original
                 self.rhs = rhs_new
+            eqn_str = str(self.main_eqn)
+            self.solve_counts[eqn_str] += 1
 
-            # >>> NEW: commit trajectory to memory (exact equation → action)
             if self.use_memory and self.traj_readable:
                 for lhs_str, rhs_str, op_s, term_s in self.traj_readable:
                     key = f"{lhs_str} = {rhs_str}"
@@ -366,8 +366,12 @@ class multiEqn(Env):
 
     def set_equation(self, main_eqn):
         self.main_eqn, self.lhs, self.rhs = main_eqn, main_eqn, 0
+        self.main_eqn_original = None
+        self.map_constants = None
+        self.map_constants_history = []
         obs, _ = self.to_vec(self.lhs, self.rhs)
         self.state = obs
+
 
 
 # Testing the updated Env class
