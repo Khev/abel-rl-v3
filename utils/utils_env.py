@@ -552,8 +552,8 @@ def get_ordered_sub_expressions(expr):
             if not e.is_Atom:
                 queue.extend(e.args)
     sub_expressions.discard(expr)
-    #return sorted(sub_expressions, key=lambda x: x.sort_key())   #UNCOMMENT THIS ONE
-    return sorted(sub_expressions, key=lambda x: (len(str(x)), str(x)))
+    return sorted(sub_expressions, key=lambda x: x.sort_key())   #UNCOMMENT THIS ONE
+    #return sorted(sub_expressions, key=lambda x: (len(str(x)), str(x)))
 
 
 def get_ordered_sub_expressions_old(expr):

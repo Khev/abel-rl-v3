@@ -913,7 +913,7 @@ if __name__ == "__main__":
     env_group = parser.add_argument_group("Environment")
     env_group.add_argument('--env_name', type=str, default='multi_eqn', help='Environment name')
     env_group.add_argument('--action_space', type=str, default='dynamic', help='Action space: fixed or dynamic')
-    env_group.add_argument('--gen', type=str, default='abel_level4', help='Equation generator')
+    env_group.add_argument('--gen', type=str, default='abel_level3', help='Equation generator')
     env_group.add_argument('--sparse_rewards', action='store_true', help='Use sparse rewards instead of shaping')
     env_group.add_argument('--use_curriculum', action='store_true', help='Use inverse sampling curriculum')
     env_group.add_argument('--use_relabel_constants', action='store_true', help='Enable relabel-constants macroaction')
@@ -921,10 +921,10 @@ if __name__ == "__main__":
     env_group.add_argument('--use_action_mask', action='store_true', help='Enable action masking for dynamic action space')
 
     train_group = parser.add_argument_group("Training")
-    train_group.add_argument('--Ntrain', type=int, default=5*10**6, help='Total training timesteps')
-    train_group.add_argument('--n_trials', type=int, default=1, help='Number of trials per agent')
-    train_group.add_argument('--n_workers', type=int, default=1, help='Number of parallel workers')
-    train_group.add_argument('--base_seed', type=int, default=1, help='Base seed')
+    train_group.add_argument('--Ntrain', type=int, default=10**6, help='Total training timesteps')
+    train_group.add_argument('--n_trials', type=int, default=3, help='Number of trials per agent')
+    train_group.add_argument('--n_workers', type=int, default=3, help='Number of parallel workers')
+    train_group.add_argument('--base_seed', type=int, default=3, help='Base seed')
     train_group.add_argument('--n_envs', type=int, default=1, help='Number of parallel envs for training (VecEnv)')
     train_group.add_argument('--ent_coef', type=float, default=0.01)
 
