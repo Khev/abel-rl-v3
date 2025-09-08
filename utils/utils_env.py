@@ -552,39 +552,8 @@ def get_ordered_sub_expressions(expr):
             if not e.is_Atom:
                 queue.extend(e.args)
     sub_expressions.discard(expr)
-    return sorted(sub_expressions, key=lambda x: x.sort_key())   #UNCOMMENT THIS ONE
-    #return sorted(sub_expressions, key=lambda x: (len(str(x)), str(x)))
-
-
-def get_ordered_sub_expressions_old(expr):
-    """Extracts all unique sub-expressions from a given symbolic expression, 
-    excluding the full expression itself, and returns them in a fixed order.
-    """
-    
-    if expr == 0:
-        return []
-    
-    sub_expressions = set()
-    queue = [expr]  # Use a queue for BFS traversal to ensure order consistency
-    
-    while queue:
-        e = queue.pop(0)  # BFS: Process oldest element
-        
-        if e not in sub_expressions and 1/e not in sub_expressions and e not in [-1,0,1]:
-            sub_expressions.add(e)
-
-            # Only expand non-atomic expressions
-            if not e.is_Atom:
-                queue.extend(e.args)  
-
-    # Exclude full expression and sort
-    sub_expressions.discard(expr)  
-    
-    # Sorting rule:
-    # - Prioritize smallest-length expressions first
-    # - Tie-break by lexicographic order of string representations (stable mapping)
-    #return sorted(sub_expressions, key=lambda x: x.sort_key())   #UNCOMMENT THIS ONE
-    return sorted(sub_expressions, key=lambda x: (len(str(x)), str(x)))
+    return sorted(sub_expressions, key=lambda x: x.sort_key())   
+    #return sorted(sub_expressions, key=lambda x: (len(str(x)), str(x))) # Old choice, that's longer
 
 
 def check_valid_eqn(lhs, rhs):

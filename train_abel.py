@@ -12,6 +12,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from contextlib import contextmanager
 from typing import Any, Dict, List, Optional, Tuple
 from heapq import nlargest
+import os
 
 import torch
 from gymnasium import ObservationWrapper, spaces
@@ -533,21 +534,6 @@ def success_at_n(model, env, equations, n_trials=10, max_steps=60, per_eqn_secon
             pass
     return solved_any / len(equations)
 
-# def _policy_action_probs(model, obs) -> np.ndarray:
-#     """Return action probs for a single observation (Discrete action space)."""
-#     with torch.no_grad():
-#         obs_tensor, _ = model.policy.obs_to_tensor(obs)
-#         dist = model.policy.get_distribution(obs_tensor)
-#         action_mask = _get_action_mask(model.env.get_envs()[0]) if hasattr(model.env.get_envs()[0], 'get_valid_action_mask') else None
-#         if action_mask is not None:
-#             action_mask = torch.as_tensor(action_mask, device=dist.distribution.probs.device)
-#             probs = dist.distribution.probs.squeeze(0) * action_mask
-#             probs = probs / (probs.sum() + 1e-12)
-#         else:
-#             probs = dist.distribution.probs.squeeze(0)
-#         probs = probs.detach().cpu().numpy()
-#     return probs
-
 def _policy_action_probs(model, obs, action_mask: Optional[np.ndarray] = None) -> np.ndarray:
     """Return action probs for a single observation (Discrete action space)."""
     with torch.no_grad():
@@ -674,6 +660,8 @@ class TrainingLogger(BaseCallback):
         self.eval_interval = eval_interval
         self.log_interval  = log_interval
         self.save_dir      = save_dir
+        self.ckpt_dir = os.path.join(self.save_dir, "checkpoints")
+        os.makedirs(self.ckpt_dir, exist_ok=True)
         self.curves_path   = os.path.join(self.save_dir, "learning_curves.csv")
         self.train_eqns = getattr(eval_env, "train_eqns", None) or getattr(train_env, "train_eqns", None)
         self.test_eqns  = getattr(eval_env, "test_eqns", None)  or getattr(train_env, "test_eqns", None)
@@ -718,7 +706,13 @@ class TrainingLogger(BaseCallback):
 
     def _on_training_start(self) -> None:
         timed_print(f"[{self.algo_name}] Training started (train_eqns={self.num_eqns}, test_eqns={len(self.test_eqns) if self.test_eqns else 0})")
-        self._log_eval(step=0)
+        #self._log_eval(step=0)
+
+    def _save_ckpt(self, step: int):
+        path_step = os.path.join(self.ckpt_dir, f"model_step{step:07d}.zip")
+        self.model.save(path_step)
+        # keep a rolling "latest" for convenience
+        self.model.save(os.path.join(self.ckpt_dir, "latest.zip"))
 
     def _on_step(self) -> bool:
         step = self.num_timesteps
@@ -735,6 +729,7 @@ class TrainingLogger(BaseCallback):
                     timed_print(f"[{self.algo_name}] Coverage 100% at step {step}")
         if self.eval_interval and step % self.eval_interval == 0:
             self._log_eval(step)
+            self._save_ckpt(step)   # <-- add this line
         return True
 
     def _on_training_end(self) -> None:
@@ -913,7 +908,7 @@ if __name__ == "__main__":
     env_group = parser.add_argument_group("Environment")
     env_group.add_argument('--env_name', type=str, default='multi_eqn', help='Environment name')
     env_group.add_argument('--action_space', type=str, default='dynamic', help='Action space: fixed or dynamic')
-    env_group.add_argument('--gen', type=str, default='abel_level3', help='Equation generator')
+    env_group.add_argument('--gen', type=str, default='abel_level4', help='Equation generator')
     env_group.add_argument('--sparse_rewards', action='store_true', help='Use sparse rewards instead of shaping')
     env_group.add_argument('--use_curriculum', action='store_true', help='Use inverse sampling curriculum')
     env_group.add_argument('--use_relabel_constants', action='store_true', help='Enable relabel-constants macroaction')
@@ -921,10 +916,10 @@ if __name__ == "__main__":
     env_group.add_argument('--use_action_mask', action='store_true', help='Enable action masking for dynamic action space')
 
     train_group = parser.add_argument_group("Training")
-    train_group.add_argument('--Ntrain', type=int, default=10**6, help='Total training timesteps')
-    train_group.add_argument('--n_trials', type=int, default=3, help='Number of trials per agent')
-    train_group.add_argument('--n_workers', type=int, default=3, help='Number of parallel workers')
-    train_group.add_argument('--base_seed', type=int, default=3, help='Base seed')
+    train_group.add_argument('--Ntrain', type=int, default=10**7, help='Total training timesteps')
+    train_group.add_argument('--n_trials', type=int, default=1, help='Number of trials per agent')
+    train_group.add_argument('--n_workers', type=int, default=1, help='Number of parallel workers')
+    train_group.add_argument('--base_seed', type=int, default=1, help='Base seed')
     train_group.add_argument('--n_envs', type=int, default=1, help='Number of parallel envs for training (VecEnv)')
     train_group.add_argument('--ent_coef', type=float, default=0.01)
 
@@ -963,8 +958,8 @@ if __name__ == "__main__":
     env_name   = args.env_name
     agents     = args.agents
     Ntrain     = args.Ntrain
-    eval_int   = args.eval_interval if args.eval_interval > 0 else max(1, Ntrain // 10)
-    log_int    = args.log_interval  if args.log_interval  > 0 else max(1, Ntrain // 10)
+    eval_int   = args.eval_interval if args.eval_interval > 0 else max(1, Ntrain // 20)
+    log_int    = args.log_interval  if args.log_interval  > 0 else max(1, Ntrain // 20)
     n_trials   = args.n_trials
     base_seed  = args.base_seed
     n_workers  = args.n_workers
