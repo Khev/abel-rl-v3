@@ -1,25 +1,26 @@
-# Core RL stack
-stable-baselines3==2.4.0
-sb3_contrib==2.4.0
-gymnasium==0.29.1
-rllte-core
-faiss-cpu
-
-# Basic ML/Math stack
+# Core math / utils
+sympy>=1.12
 numpy==1.26.4
 scipy==1.13.1
 pandas==2.2.2
-matplotlib==3.6.0
+tqdm>=4.66
+colorama>=0.4.6
+matplotlib>=3.8
 
-# Logging and CLI tools
-tqdm==4.67.1
-colorama==0.4.6
-boto3
+# RL stack
+gymnasium==0.29.1
+stable-baselines3==2.4.0
+sb3-contrib==2.4.0
+rllte
 
-# Torch stack
+# Torch stack (CPU by default; pin to your platform needs)
 torch==2.3.1
 torchvision==0.18.1
 
-# Optional GNN support
-torch-geometric==2.6.1
+# Extras
+faiss-cpu==1.8.0
 
+# Optional: GNN (PyG). Keep these if you use TreeMLP / torch-geometric.
+torch-geometric==2.6.1
+# If PyG install fails, follow platform-specific wheels:
+# https://pytorch-geometric.readthedocs.io/en/latest/notes/installation.html

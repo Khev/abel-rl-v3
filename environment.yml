@@ -1,0 +1,28 @@
+name: abel-rl
+channels:
+  - pytorch
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pip
+  # Core math / utils
+  - numpy=1.26.4
+  - scipy=1.13.1
+  - pandas=2.2.2
+  - sympy=1.12
+  # RL deps available on conda
+  - gymnasium=0.29.1
+  # Torch stack (CPU by default; switch to cudatoolkit build if you want CUDA)
+  - pytorch=2.3.1
+  - torchvision=0.18.1
+  # Extras
+  - faiss-cpu=1.8.0
+  - matplotlib=3.8.4
+  - tqdm=4.66.5
+  - colorama=0.4.6
+  - pip:
+      - stable-baselines3==2.4.0
+      - sb3-contrib==2.4.0
+      - rllte
+      # Optional GNN support (PyG). Works with torch==2.3.1 wheels.
+      - torch-geometric==2.6.1
