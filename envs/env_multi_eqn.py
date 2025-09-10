@@ -12,7 +12,7 @@ from operator import add, sub, mul, truediv
 from utils.utils_env import *
 from utils.utils_custom_functions import *
 from collections import defaultdict, deque
-import faiss  # pip install faiss-cpu
+#import faiss  # pip install faiss-cpu
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +24,14 @@ def cov_action_placeholder(expr, term):
     return expr
 
 operation_names[cov_action_placeholder] = 'cov'
+
+a, b, c, x = symbols('a b c x')
+def pi_cov_quadratic(main_eqn):
+    poly = (simplify(main_eqn)).as_poly(x)
+    if poly is None or poly.degree() != 2:
+        return None
+    A, B = poly.all_coeffs()[0], poly.all_coeffs()[1]
+    return x - B/(2*A)
 
 
 class multiEqn(Env):
@@ -54,18 +62,19 @@ class multiEqn(Env):
                  use_success_replay=True,
                  use_memory=False,
                  use_curriculum=True,
-                 train_eqns=None,
-                 # NEW: CoV
                  use_cov=False,
-                 pi_cov=None
+                 pi_cov = pi_cov_quadratic,
+                 max_cov_apps = 1,
+                 train_eqns=None,
                  ) -> None:
         super().__init__()
 
         # Static parts
         self.max_expr_length = 20
-        self.max_steps = 5
+        self.max_steps = 8   # used to be 5
         self.action_dim = 50
         self.observation_dim = 2*self.max_expr_length + 1
+        self.current_steps = 0
 
         # Rewards
         self.reward_solved = +100
@@ -90,13 +99,12 @@ class multiEqn(Env):
         self.use_memory = use_memory  # backwards compatibility
         self.use_success_replay = use_success_replay
         self.use_relabel_constants = use_relabel_constants
-
-        # CoV config + state
         self.use_cov = bool(use_cov)
         self.pi_cov = pi_cov
         self.solve_var = symbols('x')           # current solve variable (stays 'x' with CoV reuse)
         self.cov_inv = []                       # stack of inverse maps (x_prev in terms of current x)
         self.main_eqn_original_cov = None       # remember original main_eqn before first CoV
+        self.max_cov_apps = int(max_cov_apps)     # <-- and store it
 
         # For relabel constants
         self.map_constants = None
@@ -205,6 +213,7 @@ class multiEqn(Env):
         if self.use_cov and callable(self.pi_cov):
             self._cov_op = cov_action_placeholder
             self.actions_fixed.append((self._cov_op, None))
+            self.action_index_cov = len(self.actions_fixed) - 1  # Track index
 
         # Add relabel action if enabled
         if self.use_relabel_constants:
@@ -251,14 +260,18 @@ class multiEqn(Env):
             self.map_constants_history.append(map_constants)
 
         elif self.use_cov and operation is getattr(self, '_cov_op', None):
-            lhs_new, rhs_new = self._apply_cov(lhs_old, rhs_old)
-
+            if len(self.cov_inv) < self.max_cov_apps:
+                lhs_new, rhs_new = self._apply_cov(lhs_old, rhs_old)
+                cov_blocked = False
+            else:
+                lhs_new, rhs_new = lhs_old, rhs_old
+                cov_blocked = True
         else:
             lhs_new, rhs_new = operation(lhs_old, term), operation(rhs_old, term)
 
         obs_new, _ = self.to_vec(lhs_new, rhs_new)
 
-        # Bookkeeping with variable-aware checks
+        # Book keeping with variable-aware checks
         is_valid_eqn, lhs_new, rhs_new = self._check_valid_eqn_local(lhs_new, rhs_new)
         is_solved = self._check_eqn_solved_local(lhs_new, rhs_new)
 
@@ -309,6 +322,7 @@ class multiEqn(Env):
             # diagnostics
             "solve_var":      self.solve_var,
             "cov_depth":      len(self.cov_inv),
+            'cov_blocked':    'cov_blocked' in locals() and cov_blocked
         }
 
         if is_solved and self.use_success_replay:
@@ -317,6 +331,9 @@ class multiEqn(Env):
 
         if self.verbose:
             print(f"{self.lhs} = {self.rhs}. (Operation, term): ({operation_names[operation]}, {term})")
+
+        # if action_index == self.action_index_cov:
+        #     print(f"{self.lhs} = {self.rhs}. (Operation, term): ({operation_names[operation]}, {term})")
 
         if terminated or truncated:
             self.traj_obs = []
@@ -351,14 +368,7 @@ class multiEqn(Env):
         self.main_eqn = main2
 
         inv_expr = None
-        try:
-            u = symbols('_xprev')
-            sol = solve(Eq(u, sub_expr), v)
-            if sol:
-                inv_expr = sol[0].subs(u, v)
-        except Exception:
-            inv_expr = None
-
+        inv_expr = sympify(sub_expr)  # forward map: x_old := sub_expr(x_new)
         self.cov_inv.append(inv_expr)
         return lhs2, rhs2
 
@@ -537,101 +547,101 @@ class multiEqn(Env):
 # Smoke test: run `python envs/env_multi_eqn.py`
 # Demonstrates: CoV (complete-the-square), algebraic isolation, solved check
 # ──────────────────────────────────────────────────────────────────────────────
-if __name__ == '__main__':
-    from sympy import symbols
+# if __name__ == '__main__':
+#     from sympy import symbols
 
-    a, b, c, x = symbols('a b c x')
+#     a, b, c, x = symbols('a b c x')
 
-    # CoV policy: complete-the-square when quadratic in x:
-    # returns sub_expr to assign into x (reuse x):  x := x - B/(2A)
-    def pi_cov_quadratic(main_eqn):
-        poly = (simplify(main_eqn)).as_poly(x)
-        if poly is None or poly.degree() != 2:
-            return None
-        A, B = poly.all_coeffs()[0], poly.all_coeffs()[1]
-        return x - B/(2*A)
+#     # CoV policy: complete-the-square when quadratic in x:
+#     # returns sub_expr to assign into x (reuse x):  x := x - B/(2A)
+#     def pi_cov_quadratic(main_eqn):
+#         poly = (simplify(main_eqn)).as_poly(x)
+#         if poly is None or poly.degree() != 2:
+#             return None
+#         A, B = poly.all_coeffs()[0], poly.all_coeffs()[1]
+#         return x - B/(2*A)
 
-    env = multiEqn(
-        gen='abel_level1',
-        state_rep='graph_integer_1d',
-        use_cov=True,
-        pi_cov=pi_cov_quadratic,
-        use_relabel_constants=True,
-        use_curriculum=False,   # deterministic for the demo
-    )
+#     env = multiEqn(
+#         gen='abel_level1',
+#         state_rep='graph_integer_1d',
+#         use_cov=True,
+#         pi_cov=pi_cov_quadratic,
+#         use_relabel_constants=True,
+#         use_curriculum=False,   # deterministic for the demo
+#     )
 
-    env.reset()
-    env.set_equation(sympify("a*x**2 + b*x + c"))
+#     env.reset()
+#     env.set_equation(sympify("a*x**2 + b*x + c"))
 
-    print("\n[Before CoV]")
-    print(" main_eqn:", env.main_eqn)
-    print(" solve_var:", env.solve_var)
-    print(" cov_depth:", len(env.cov_inv))
+#     print("\n[Before CoV]")
+#     print(" main_eqn:", env.main_eqn)
+#     print(" solve_var:", env.solve_var)
+#     print(" cov_depth:", len(env.cov_inv))
 
-    # find cov action index
-    cov_idx = None
-    for i, (op, term) in enumerate(env.actions):
-        if op is getattr(env, '_cov_op', None):
-            cov_idx = i
-            break
-    if cov_idx is None:
-        raise RuntimeError("CoV action not found; ensure use_cov=True and pi_cov provided.")
+#     # find cov action index
+#     cov_idx = None
+#     for i, (op, term) in enumerate(env.actions):
+#         if op is getattr(env, '_cov_op', None):
+#             cov_idx = i
+#             break
+#     if cov_idx is None:
+#         raise RuntimeError("CoV action not found; ensure use_cov=True and pi_cov provided.")
 
-    # 1) Apply CoV: x := x - b/(2a)
-    obs, rew, terminated, truncated, info = env.step(cov_idx)
+#     # 1) Apply CoV: x := x - b/(2a)
+#     obs, rew, terminated, truncated, info = env.step(cov_idx)
 
-    print("\n[After CoV]")
-    print(" main_eqn:", env.main_eqn)    # should be a*x**2 + c - b**2/(4*a)
-    print(" solve_var:", info.get("solve_var"))
-    print(" cov_depth:", info.get("cov_depth"))
-    print(" is_valid_eqn:", info.get("is_valid_eqn"))
-    print(" is_solved:", info.get("is_solved"))
+#     print("\n[After CoV]")
+#     print(" main_eqn:", env.main_eqn)    # should be a*x**2 + c - b**2/(4*a)
+#     print(" solve_var:", info.get("solve_var"))
+#     print(" cov_depth:", info.get("cov_depth"))
+#     print(" is_valid_eqn:", info.get("is_valid_eqn"))
+#     print(" is_solved:", info.get("is_solved"))
 
-    # Helper to find index of (op, term) in current env.actions
-    # 2) Recompute actions on-the-fly (only if you really need a fresh list)
-    def find_action_recompute(env, op_fn, term_value=None):
-        actions_temp, _mask = make_actions(env.lhs, env.rhs, env.actions_fixed, env.action_dim)
-        for j, (opj, tj) in enumerate(actions_temp):
-            same_op = (opj is op_fn)
-            same_term = True
-            if term_value is not None:
-                if hasattr(tj, "equals"):
-                    same_term = bool(tj.equals(term_value))
-                else:
-                    same_term = (str(tj) == str(term_value))
-            if same_op and same_term:
-                return j
-        return None
+#     # Helper to find index of (op, term) in current env.actions
+#     # 2) Recompute actions on-the-fly (only if you really need a fresh list)
+#     def find_action_recompute(env, op_fn, term_value=None):
+#         actions_temp, _mask = make_actions(env.lhs, env.rhs, env.actions_fixed, env.action_dim)
+#         for j, (opj, tj) in enumerate(actions_temp):
+#             same_op = (opj is op_fn)
+#             same_term = True
+#             if term_value is not None:
+#                 if hasattr(tj, "equals"):
+#                     same_term = bool(tj.equals(term_value))
+#                 else:
+#                     same_term = (str(tj) == str(term_value))
+#             if same_op and same_term:
+#                 return j
+#         return None
 
 
-    # Refresh actions after CoV
-    env.actions, env.action_mask = make_actions(env.lhs, env.rhs, env.actions_fixed, env.action_dim)
+#     # Refresh actions after CoV
+#     env.actions, env.action_mask = make_actions(env.lhs, env.rhs, env.actions_fixed, env.action_dim)
 
-    # 2) Add b**2/(4*a) to both sides: a*x**2 + c  =  b**2/(4*a)
-    add_b2_over_4a = find_action_recompute(add, sympify("b**2/(4*a)"))
-    assert add_b2_over_4a is not None, "add (b**2/(4*a)) not available"
-    obs, rew, terminated, truncated, info = env.step(add_b2_over_4a)
+#     # 2) Add b**2/(4*a) to both sides: a*x**2 + c  =  b**2/(4*a)
+#     add_b2_over_4a = find_action_recompute(add, sympify("b**2/(4*a)"))
+#     assert add_b2_over_4a is not None, "add (b**2/(4*a)) not available"
+#     obs, rew, terminated, truncated, info = env.step(add_b2_over_4a)
 
-    # 3) Subtract c from both sides: a*x**2  =  b**2/(4*a) - c
-    sub_c = find_action_recompute(sub, c)
-    assert sub_c is not None, "sub c not available"
-    obs, rew, terminated, truncated, info = env.step(sub_c)
+#     # 3) Subtract c from both sides: a*x**2  =  b**2/(4*a) - c
+#     sub_c = find_action_recompute(sub, c)
+#     assert sub_c is not None, "sub c not available"
+#     obs, rew, terminated, truncated, info = env.step(sub_c)
 
-    # 4) Divide both sides by a: x**2  =  b**2/(4*a**2) - c/a
-    div_a = find_action_recompute(truediv, a)
-    assert div_a is not None, "divide by a not available"
-    obs, rew, terminated, truncated, info = env.step(div_a)
+#     # 4) Divide both sides by a: x**2  =  b**2/(4*a**2) - c/a
+#     div_a = find_action_recompute(truediv, a)
+#     assert div_a is not None, "divide by a not available"
+#     obs, rew, terminated, truncated, info = env.step(div_a)
 
-    # 5) Take sqrt on both sides: x = sqrt(b**2/(4*a**2) - c/a)
-    do_sqrt = find_action_recompute(custom_sqrt, None)
-    assert do_sqrt is not None, "sqrt op not available"
-    obs, rew, terminated, truncated, info = env.step(do_sqrt)
+#     # 5) Take sqrt on both sides: x = sqrt(b**2/(4*a**2) - c/a)
+#     do_sqrt = find_action_recompute(custom_sqrt, None)
+#     assert do_sqrt is not None, "sqrt op not available"
+#     obs, rew, terminated, truncated, info = env.step(do_sqrt)
 
-    print("\n[After algebraic isolation]")
-    print(" lhs:", info["lhs"])
-    print(" rhs:", info["rhs"])
-    print(" is_valid_eqn:", info["is_valid_eqn"])
-    print(" is_solved:", info["is_solved"])
+#     print("\n[After algebraic isolation]")
+#     print(" lhs:", info["lhs"])
+#     print(" rhs:", info["rhs"])
+#     print(" is_valid_eqn:", info["is_valid_eqn"])
+#     print(" is_solved:", info["is_solved"])
 
-    # If solved, env has already unwound CoV (and relabels) in info["lhs"], info["rhs"]
-    # For symbolic a,b,c this should pass the substitution check in _check_eqn_solved_local.
+#     # If solved, env has already unwound CoV (and relabels) in info["lhs"], info["rhs"]
+#     # For symbolic a,b,c this should pass the substitution check in _check_eqn_solved_local.

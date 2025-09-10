@@ -54,6 +54,19 @@ EVAL_TIMEOUT_STOCH = 1.00  # per-equation budget for success@N
 class EvalTimeout(Exception):
     pass
 
+def _unwrap_attr(env, name):
+    # VecEnv path (SB3)
+    if hasattr(env, "get_attr"):
+        vals = env.get_attr(name)
+        return vals[0] if vals else None
+    # Gymnasium wrapper chain
+    if hasattr(env, "get_wrapper_attr"):
+        return env.get_wrapper_attr(name)
+    # Plain gym env
+    if hasattr(env, "unwrapped"):
+        return getattr(env.unwrapped, name, None)
+    return getattr(env, name, None)
+
 @contextmanager
 def time_limit(seconds: float):
     """Raise EvalTimeout if the with-block exceeds `seconds` (POSIX only)."""
@@ -79,7 +92,7 @@ def get_device():
         cur_proc_identity = mp.current_process()._identity
         return (cur_proc_identity[0] - 1) % torch.cuda.device_count() if cur_proc_identity else 0
     else:
-        print("CUDA not found: using CPU")
+        #print("CUDA not found: using CPU")
         return "cpu"
 
 def get_intrinsic_reward(intrinsic_reward: Optional[str], vec_env):
@@ -663,8 +676,10 @@ class TrainingLogger(BaseCallback):
         self.ckpt_dir = os.path.join(self.save_dir, "checkpoints")
         os.makedirs(self.ckpt_dir, exist_ok=True)
         self.curves_path   = os.path.join(self.save_dir, "learning_curves.csv")
-        self.train_eqns = getattr(eval_env, "train_eqns", None) or getattr(train_env, "train_eqns", None)
-        self.test_eqns  = getattr(eval_env, "test_eqns", None)  or getattr(train_env, "test_eqns", None)
+        #self.train_eqns = getattr(eval_env, "train_eqns", None) or getattr(train_env, "train_eqns", None)
+        #self.test_eqns  = getattr(eval_env, "test_eqns", None)  or getattr(train_env, "test_eqns", None)
+        self.train_eqns = _unwrap_attr(eval_env, "train_eqns") or _unwrap_attr(train_env, "train_eqns")
+        self.test_eqns  = _unwrap_attr(eval_env, "test_eqns")  or _unwrap_attr(train_env, "test_eqns")
         self.num_eqns   = len(self.train_eqns) if self.train_eqns is not None else 1
         self.Tsolves: Dict[Any, int] = {}
         self.Tsolve: Optional[float]  = None
@@ -908,17 +923,18 @@ if __name__ == "__main__":
     env_group = parser.add_argument_group("Environment")
     env_group.add_argument('--env_name', type=str, default='multi_eqn', help='Environment name')
     env_group.add_argument('--action_space', type=str, default='dynamic', help='Action space: fixed or dynamic')
-    env_group.add_argument('--gen', type=str, default='abel_level4', help='Equation generator')
+    env_group.add_argument('--gen', type=str, default='test_cov2', help='Equation generator')
     env_group.add_argument('--sparse_rewards', action='store_true', help='Use sparse rewards instead of shaping')
     env_group.add_argument('--use_curriculum', action='store_true', help='Use inverse sampling curriculum')
     env_group.add_argument('--use_relabel_constants', action='store_true', help='Enable relabel-constants macroaction')
     env_group.add_argument('--use_success_replay', action='store_true', help='Enable success replay BC updates')
+    env_group.add_argument('--use_cov', action='store_true', help='enable change of variables')
     env_group.add_argument('--use_action_mask', action='store_true', help='Enable action masking for dynamic action space')
 
     train_group = parser.add_argument_group("Training")
-    train_group.add_argument('--Ntrain', type=int, default=10**7, help='Total training timesteps')
-    train_group.add_argument('--n_trials', type=int, default=1, help='Number of trials per agent')
-    train_group.add_argument('--n_workers', type=int, default=1, help='Number of parallel workers')
+    train_group.add_argument('--Ntrain', type=int, default=5*10**6, help='Total training timesteps')
+    train_group.add_argument('--n_trials', type=int, default=4, help='Number of trials per agent')
+    train_group.add_argument('--n_workers', type=int, default=4, help='Number of parallel workers')
     train_group.add_argument('--base_seed', type=int, default=1, help='Base seed')
     train_group.add_argument('--n_envs', type=int, default=1, help='Number of parallel envs for training (VecEnv)')
     train_group.add_argument('--ent_coef', type=float, default=0.01)
