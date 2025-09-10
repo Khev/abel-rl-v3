@@ -62,7 +62,7 @@ class multiEqn(Env):
                  use_success_replay=True,
                  use_memory=False,
                  use_curriculum=True,
-                 use_cov=False,
+                 use_cov=True,
                  pi_cov = pi_cov_quadratic,
                  max_cov_apps = 1,
                  train_eqns=None,
@@ -332,8 +332,8 @@ class multiEqn(Env):
         if self.verbose:
             print(f"{self.lhs} = {self.rhs}. (Operation, term): ({operation_names[operation]}, {term})")
 
-        # if action_index == self.action_index_cov:
-        #     print(f"{self.lhs} = {self.rhs}. (Operation, term): ({operation_names[operation]}, {term})")
+        #if action_index == self.action_index_cov:
+        #    print(f"{self.lhs} = {self.rhs}. (Operation, term): ({operation_names[operation]}, {term})")
 
         if terminated or truncated:
             self.traj_obs = []
