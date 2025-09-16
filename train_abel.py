@@ -932,9 +932,9 @@ if __name__ == "__main__":
     env_group.add_argument('--use_action_mask', action='store_true', help='Enable action masking for dynamic action space')
 
     train_group = parser.add_argument_group("Training")
-    train_group.add_argument('--Ntrain', type=int, default=5*10**6, help='Total training timesteps')
-    train_group.add_argument('--n_trials', type=int, default=4, help='Number of trials per agent')
-    train_group.add_argument('--n_workers', type=int, default=4, help='Number of parallel workers')
+    train_group.add_argument('--Ntrain', type=int, default=10**7, help='Total training timesteps')
+    train_group.add_argument('--n_trials', type=int, default=1, help='Number of trials per agent')
+    train_group.add_argument('--n_workers', type=int, default=1, help='Number of parallel workers')
     train_group.add_argument('--base_seed', type=int, default=1, help='Base seed')
     train_group.add_argument('--n_envs', type=int, default=1, help='Number of parallel envs for training (VecEnv)')
     train_group.add_argument('--ent_coef', type=float, default=0.01)

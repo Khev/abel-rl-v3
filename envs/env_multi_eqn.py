@@ -34,6 +34,13 @@ def pi_cov_quadratic(main_eqn):
     return x - B/(2*A)
 
 
+class TimeoutException(Exception):
+    pass
+
+def timeout_handler(signum, frame):
+    raise TimeoutException("Operation timed out")
+
+
 class multiEqn(Env):
     """
     Environment for solving multiple equations using RL, with a simple curriculum
@@ -62,7 +69,7 @@ class multiEqn(Env):
                  use_success_replay=True,
                  use_memory=False,
                  use_curriculum=True,
-                 use_cov=True,
+                 use_cov=False,
                  pi_cov = pi_cov_quadratic,
                  max_cov_apps = 1,
                  train_eqns=None,
@@ -71,7 +78,7 @@ class multiEqn(Env):
 
         # Static parts
         self.max_expr_length = 20
-        self.max_steps = 8   # used to be 5
+        self.max_steps = 5   # used to be 5
         self.action_dim = 50
         self.observation_dim = 2*self.max_expr_length + 1
         self.current_steps = 0
@@ -319,7 +326,6 @@ class multiEqn(Env):
             "action_mask":    self.action_mask,
             "map_constants":  self.map_constants,
             "map_constants_history": list(self.map_constants_history),
-            # diagnostics
             "solve_var":      self.solve_var,
             "cov_depth":      len(self.cov_inv),
             'cov_blocked':    'cov_blocked' in locals() and cov_blocked
@@ -329,10 +335,11 @@ class multiEqn(Env):
             info["traj_obs"] = list(self.traj_obs)
             info["traj_act"] = list(self.traj_act)
 
+        #self.verbose = True
         if self.verbose:
             print(f"{self.lhs} = {self.rhs}. (Operation, term): ({operation_names[operation]}, {term})")
 
-        #if action_index == self.action_index_cov:
+        #if self.use_cov and action_index == self.action_index_cov:
         #    print(f"{self.lhs} = {self.rhs}. (Operation, term): ({operation_names[operation]}, {term})")
 
         if terminated or truncated:
@@ -345,32 +352,83 @@ class multiEqn(Env):
     # CoV: reuse x; push inverse mapping
     # ──────────────────────────────────────────────────────────────────────────
 
-    def _apply_cov(self, lhs, rhs):
-        if not callable(self.pi_cov):
+    # def _apply_cov(self, lhs, rhs):
+    #     if not callable(self.pi_cov):
+    #         return lhs, rhs
+
+    #     print('line 1')
+
+    #     v = self.solve_var
+    #     # ⬇️ ensure SymPy objects
+    #     lhs_s = sympify(lhs)
+    #     rhs_s = sympify(rhs)
+    #     main_s = sympify(self.main_eqn)
+
+    #     sub_expr = self.pi_cov(main_s)
+    #     if sub_expr is None:
+    #         return lhs, rhs
+
+    #     print('line 2')
+
+    #     lhs2  = simplify(lhs_s.subs(v, sub_expr))
+    #     rhs2  = simplify(rhs_s.subs(v, sub_expr))
+    #     main2 = simplify(main_s.subs(v, sub_expr))
+
+    #     if self.main_eqn_original_cov is None:
+    #         self.main_eqn_original_cov = self.main_eqn
+    #     self.main_eqn = main2
+
+    #     print('line 3')
+
+    #     inv_expr = None
+    #     inv_expr = sympify(sub_expr)  # forward map: x_old := sub_expr(x_new)
+    #     self.cov_inv.append(inv_expr)
+    #     return lhs2, rhs2
+
+    def _apply_cov(self, lhs, rhs, timeout_seconds=1):
+        """
+        Apply completion of the square with a timeout.
+        
+        Args:
+            lhs: Left-hand side of the equation.
+            rhs: Right-hand side of the equation.
+            timeout_seconds: Maximum time (in seconds) to allow for computation.
+        
+        Returns:
+            Tuple of (lhs, rhs) after CoV, or original (lhs, rhs) if timed out or invalid.
+        """
+        if not callable(getattr(self, 'pi_cov', None)):
+            logger.warning("pi_cov is not callable")
             return lhs, rhs
-
-        v = self.solve_var
-        # ⬇️ ensure SymPy objects
-        lhs_s = sympify(lhs)
-        rhs_s = sympify(rhs)
-        main_s = sympify(self.main_eqn)
-
-        sub_expr = self.pi_cov(main_s)
-        if sub_expr is None:
+        
+        # Set up timeout
+        signal.signal(signal.SIGALRM, timeout_handler)
+        signal.alarm(timeout_seconds)
+        
+        try:
+            v = self.solve_var
+            # Ensure SymPy objects
+            lhs_s = sympify(lhs)
+            rhs_s = sympify(rhs)
+            main_s = sympify(self.main_eqn)
+            sub_expr = self.pi_cov(main_s)
+            if sub_expr is None:
+                logger.warning("pi_cov returned None")
+                return lhs, rhs
+            lhs2 = simplify(lhs_s.subs(v, sub_expr))
+            rhs2 = simplify(rhs_s.subs(v, sub_expr))
+            main2 = simplify(main_s.subs(v, sub_expr))
+            if self.main_eqn_original_cov is None:
+                self.main_eqn_original_cov = self.main_eqn
+            self.main_eqn = main2
+            inv_expr = sympify(sub_expr)  # Forward map: x_old := sub_expr(x_new)
+            self.cov_inv.append(inv_expr)
+            return lhs2, rhs2
+        except TimeoutException:
+            logger.warning(f"_apply_cov timed out after {timeout_seconds} seconds")
             return lhs, rhs
-
-        lhs2  = simplify(lhs_s.subs(v, sub_expr))
-        rhs2  = simplify(rhs_s.subs(v, sub_expr))
-        main2 = simplify(main_s.subs(v, sub_expr))
-
-        if self.main_eqn_original_cov is None:
-            self.main_eqn_original_cov = self.main_eqn
-        self.main_eqn = main2
-
-        inv_expr = None
-        inv_expr = sympify(sub_expr)  # forward map: x_old := sub_expr(x_new)
-        self.cov_inv.append(inv_expr)
-        return lhs2, rhs2
+        finally:
+            signal.alarm(0)  # Disable the alarm
 
 
     # ──────────────────────────────────────────────────────────────────────────
