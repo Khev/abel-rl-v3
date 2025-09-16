@@ -1,0 +1,49 @@
+a*x**2 + 2*a*x + c
+2*b*x + c + x**2
+a*x**2 + a + 2*b*x
+b*x + b + x**2
+b*x + c + x**2
+a + b*x + x**2
+a*x + b*x**2 + b
+a*x**2 + a*x + a
+a*x + b + x**2
+2*a*x + b + x**2
+2*a*x + c + x**2
+a*x**2 + a*x + c
+2*a*x + a + x**2
+a*x**2 + b*x + b
+a + 2*b*x + x**2
+a*x**2 + b*x + c
+a*x + a + x**2
+a*x**2 + a + b*x
+a*x**2 + 2*a*x + a
+x**2 + a
+x**2 + b
+x**2 + c
+x**2 + a*b
+x**2 + a*c
+x**2 + b*a
+x**2 + b*c
+x**2 + c*a
+x**2 + c*b
+x**2 + a*b/c
+x**2 + b*a/c
+x**2 + a*c/b
+x**2 + c*a/b
+x**2 + b*c/a
+x**2 + c*b/a
+a*x**2 + a
+a*x**2 + b
+a*x**2 + c
+a*x**2 + a*b
+a*x**2 + a*c
+a*x**2 + b*a
+a*x**2 + b*c
+a*x**2 + c*a
+a*x**2 + c*b
+a*x**2 + a*b/c
+a*x**2 + b*a/c
+a*x**2 + a*c/b
+a*x**2 + c*a/b
+a*x**2 + b*c/a
+a*x**2 + c*b/a
