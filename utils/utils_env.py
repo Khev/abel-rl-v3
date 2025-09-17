@@ -1055,11 +1055,28 @@ def load_train_test_equations(dirn, level, generalization="shallow"):
         train_eqns (list): List of sympified train equations.
         test_eqns (list): List of sympified test equations.
     """
+
+    if generalization == 'poesia-full':
+
+        generalization = 'poesia'
+        train_eqns_path = os.path.join(dirn, generalization, "train_eqns.txt")
+        test_eqns_path = os.path.join(dirn, generalization, "test_eqns.txt")
+
+        with open(test_eqns_path, "r") as f:
+            train_eqns = [sympify(line.strip()) for line in f.readlines()]
+        with open(test_eqns_path, "r") as f:
+            test_eqns = [sympify(line.strip()) for line in f.readlines()]
+        
+        return train_eqns, test_eqns
+
     train_eqns_path = os.path.join(dirn, generalization, "train_eqns.txt")
     test_eqns_path = os.path.join(dirn, generalization, "test_eqns.txt")
 
     if not os.path.exists(train_eqns_path) or not os.path.exists(test_eqns_path):
         raise FileNotFoundError(f"Train or test equation file not found for level {level} in {dirn}")
+
+    with open(test_eqns_path, "r") as f:
+        test_eqns = [sympify(line.strip()) for line in f.readlines()]
 
     # Read and sympify each equation
     with open(train_eqns_path, "r") as f:
@@ -1069,3 +1086,20 @@ def load_train_test_equations(dirn, level, generalization="shallow"):
         test_eqns = [sympify(line.strip()) for line in f.readlines()]
 
     return train_eqns, test_eqns
+
+
+def _int_to_symbol(n: int) -> str:
+    """
+    0   → 'k'
+    1   → 'a'
+    …   → …
+    -3  → '-c'
+    10  → 'j'
+    """
+    if n == 0:
+        return 'k'
+    sign = '-' if n < 0 else ''
+    n = abs(n)
+    base = letter_map.get(n, f'c{n}')   # fallback name if |n|>26
+    return f'{sign}{base}'
+

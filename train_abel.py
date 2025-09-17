@@ -821,7 +821,8 @@ def run_trial(
         log_interval=log_interval,
         save_dir=run_dir
     )
-    cb_list: List[BaseCallback] = [cb_main, ProgressBarCallback()]
+    #cb_list: List[BaseCallback] = [cb_main, ProgressBarCallback()]
+    cb_list: List[BaseCallback] = [cb_main]
     if use_success_replay:
         cb_list.append(
             SuccessReplayCallback(
@@ -852,7 +853,7 @@ def run_trial(
         irs = get_intrinsic_reward(curiosity, curiosity_vec)
         if irs:
             cb_list.append(IntrinsicReward(irs))
-    model.learn(total_timesteps=Ntrain, callback=cb_list)
+    model.learn(total_timesteps=Ntrain, callback=cb_list, progress_bar=True)
     model_path = os.path.join(run_dir, f"{tag}.zip")
     model.save(model_path)
     final_model_path = os.path.join(run_dir, "final_model.zip")
@@ -974,8 +975,8 @@ if __name__ == "__main__":
     env_name   = args.env_name
     agents     = args.agents
     Ntrain     = args.Ntrain
-    eval_int   = args.eval_interval if args.eval_interval > 0 else max(1, Ntrain // 20)
-    log_int    = args.log_interval  if args.log_interval  > 0 else max(1, Ntrain // 20)
+    eval_int   = args.eval_interval if args.eval_interval > 0 else max(1, Ntrain // 100)
+    log_int    = args.log_interval  if args.log_interval  > 0 else max(1, Ntrain // 100)
     n_trials   = args.n_trials
     base_seed  = args.base_seed
     n_workers  = args.n_workers

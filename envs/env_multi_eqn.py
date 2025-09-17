@@ -16,6 +16,23 @@ from collections import defaultdict, deque
 
 logger = logging.getLogger(__name__)
 
+letter_map = {i: chr(ord('a') + i - 1) for i in range(1, 27)}
+
+def _int_to_symbol(n: int) -> str:
+    """
+    0   → 'k'
+    1   → 'a'
+    …   → …
+    -3  → '-c'
+    10  → 'j'
+    """
+    if n == 0:
+        return 'k'
+    sign = '-' if n < 0 else ''
+    n = abs(n)
+    base = letter_map.get(n, f'c{n}')   # fallback name if |n|>26
+    return f'{sign}{base}'
+
 # ──────────────────────────────────────────────────────────────────────────────
 # CoV placeholder op (we intercept this in step() to do a two-sided transform)
 # ──────────────────────────────────────────────────────────────────────────────
@@ -63,7 +80,6 @@ class multiEqn(Env):
                  cache=False, 
                  level=4, 
                  gen='abel_level_2',
-                 generalization=None,
                  sparse_rewards=False,
                  use_relabel_constants=False,
                  use_success_replay=True,
@@ -82,6 +98,7 @@ class multiEqn(Env):
         self.action_dim = 50
         self.observation_dim = 2*self.max_expr_length + 1
         self.current_steps = 0
+        self.gen = gen
 
         # Rewards
         self.reward_solved = +100
@@ -98,7 +115,6 @@ class multiEqn(Env):
         self.normalize_rewards = normalize_rewards
         self.state_rep = state_rep
         self.verbose = verbose
-        self.generalization = generalization
 
         # Inductive biases
         self.sparse_reward = sparse_rewards
@@ -119,6 +135,7 @@ class multiEqn(Env):
         self._timeout_count = 0
         self.main_eqn_original = None
 
+        # Load in train/test equations
         eqn_dirn = f"equation_templates"
         if train_eqns is None:
             self.train_eqns, self.test_eqns = load_train_test_equations(eqn_dirn, "", generalization=gen)
@@ -127,6 +144,15 @@ class multiEqn(Env):
 
         self.train_eqns_str = [str(eq) for eq in self.train_eqns]
         self.test_eqns_str = [str(eq) for eq in self.test_eqns]
+
+        if gen == 'poesia-full':
+            TEMPLATE_PATH = "equation_templates/poesia/equations-ct.txt"
+            def fetch_templates():
+                with open(TEMPLATE_PATH, 'r') as f:
+                    templates = [line.strip() for line in f if line.strip() and not line.startswith('!')]
+                print(f"Loaded {len(templates)} templates from local file.")
+                return templates
+            self.templates = fetch_templates()  # Load templates once
 
         # Overwrite
         if gen == 'abel_level4':
@@ -152,7 +178,7 @@ class multiEqn(Env):
         self.sample_counts = defaultdict(int)
 
         # Random initial eqn
-        if generalization == 'poesia-full':
+        if self.gen == 'poesia-full':
             self.main_eqn = self.sample_poesia_equation()
         else:
             eqn_str = np.random.choice(self.train_eqns_str)
@@ -237,6 +263,29 @@ class multiEqn(Env):
             )
         else:
             self.actions, self.action_mask = make_actions(self.lhs, self.rhs, self.actions_fixed, self.action_dim)
+
+
+    def sample_poesia_equation(self, *, seed=None):
+        if seed is not None:
+            np.random.seed(seed)
+
+        template = np.random.choice(self.templates)          # raw line
+        placeholders = set(re.findall(r'-?\d+', template))   # e.g. "-2", "5"
+
+        eq_str = template
+        for ph in placeholders:
+            rnd = np.random.randint(-10, 11)                # may be 0
+            eq_str = eq_str.replace(ph, _int_to_symbol(rnd))
+
+        # convert "ax" → "a*x", "bx" → "b*x",  "0x" is impossible now
+        eq_str = re.sub(r'([A-Za-z])x\b', r'\1*x', eq_str)
+
+        # "lhs = rhs"  →  "lhs - (rhs)"
+        if '=' in eq_str:
+            lhs, rhs = map(str.strip, eq_str.split('=', 1))
+            eq_str = f'{lhs} - ({rhs})'
+
+        return sympify(eq_str)
 
     # ──────────────────────────────────────────────────────────────────────────
     # Step
@@ -338,6 +387,7 @@ class multiEqn(Env):
         #self.verbose = True
         if self.verbose:
             print(f"{self.lhs} = {self.rhs}. (Operation, term): ({operation_names[operation]}, {term})")
+            print(f'step, is_solved = {self.current_steps}, {is_solved}')
 
         #if self.use_cov and action_index == self.action_index_cov:
         #    print(f"{self.lhs} = {self.rhs}. (Operation, term): ({operation_names[operation]}, {term})")
@@ -351,39 +401,6 @@ class multiEqn(Env):
     # ──────────────────────────────────────────────────────────────────────────
     # CoV: reuse x; push inverse mapping
     # ──────────────────────────────────────────────────────────────────────────
-
-    # def _apply_cov(self, lhs, rhs):
-    #     if not callable(self.pi_cov):
-    #         return lhs, rhs
-
-    #     print('line 1')
-
-    #     v = self.solve_var
-    #     # ⬇️ ensure SymPy objects
-    #     lhs_s = sympify(lhs)
-    #     rhs_s = sympify(rhs)
-    #     main_s = sympify(self.main_eqn)
-
-    #     sub_expr = self.pi_cov(main_s)
-    #     if sub_expr is None:
-    #         return lhs, rhs
-
-    #     print('line 2')
-
-    #     lhs2  = simplify(lhs_s.subs(v, sub_expr))
-    #     rhs2  = simplify(rhs_s.subs(v, sub_expr))
-    #     main2 = simplify(main_s.subs(v, sub_expr))
-
-    #     if self.main_eqn_original_cov is None:
-    #         self.main_eqn_original_cov = self.main_eqn
-    #     self.main_eqn = main2
-
-    #     print('line 3')
-
-    #     inv_expr = None
-    #     inv_expr = sympify(sub_expr)  # forward map: x_old := sub_expr(x_new)
-    #     self.cov_inv.append(inv_expr)
-    #     return lhs2, rhs2
 
     def _apply_cov(self, lhs, rhs, timeout_seconds=1):
         """
@@ -496,7 +513,7 @@ class multiEqn(Env):
 
     def reset(self, seed=None, options=None):
         # Sample an equation
-        if self.generalization == 'poesia-full':
+        if self.gen == 'poesia-full':
             self.main_eqn = self.sample_poesia_equation()
         else:
             if options is None:
