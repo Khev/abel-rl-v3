@@ -14,6 +14,9 @@ from utils.utils_custom_functions import *
 from collections import defaultdict, deque
 #import faiss  # pip install faiss-cpu
 
+import signal
+import time
+
 logger = logging.getLogger(__name__)
 
 letter_map = {i: chr(ord('a') + i - 1) for i in range(1, 27)}
@@ -88,6 +91,7 @@ class multiEqn(Env):
                  use_cov=False,
                  pi_cov = pi_cov_quadratic,
                  max_cov_apps = 1,
+                 step_timeout: float = 0.5,
                  train_eqns=None,
                  ) -> None:
         super().__init__()
@@ -99,6 +103,7 @@ class multiEqn(Env):
         self.observation_dim = 2*self.max_expr_length + 1
         self.current_steps = 0
         self.gen = gen
+        self.step_timeout = step_timeout
 
         # Rewards
         self.reward_solved = +100
@@ -290,7 +295,7 @@ class multiEqn(Env):
     # ──────────────────────────────────────────────────────────────────────────
     # Step
     # ──────────────────────────────────────────────────────────────────────────
-    def step(self, action_index: int):
+    def step_base(self, action_index: int):
         lhs_old, rhs_old, obs_old = self.lhs, self.rhs, self.state
 
         # (re)build current action list
@@ -397,6 +402,58 @@ class multiEqn(Env):
             self.traj_act = []
 
         return obs_new, reward, terminated, truncated, info
+
+
+    def step(self, action_index: int):
+        """Time-limited step wrapper. Calls step_base(action) with a wall-clock limit.
+        On timeout: returns (state, small step reward, terminated=False, truncated=True)."""
+        timeout = getattr(self, "step_timeout", 0.0)
+
+        # No timeout or platform doesn't support SIGALRM → run normally
+        if timeout is None or timeout <= 0 or os.name == "nt":
+            return self.step_base(action_index)
+
+        # Install a temporary alarm
+        def _handler(signum, frame):
+            raise TimeoutException("step() timed out")
+
+        prev = signal.signal(signal.SIGALRM, _handler)
+        # Use ITIMER_REAL so it measures wall-clock time even during pure Python
+        signal.setitimer(signal.ITIMER_REAL, timeout)
+        try:
+            return self.step_base(action_index)
+        except TimeoutException:
+            # book-keeping
+            self._timeout_count = getattr(self, "_timeout_count", 0) + 1
+            self.traj_obs = []
+            self.traj_act = []
+
+            # Choose a minimal per-step reward consistent with your scheme
+            if self.sparse_reward:
+                raw_r = 0.0
+            else:
+                raw_r = self.reward_step  # your usual per-step shaping (-1)
+
+            if self.normalize_rewards:
+                # same normalization used in find_reward()
+                min_r, max_r = self.reward_invalid_equation, self.reward_solved
+                reward = 2.0 * (raw_r - min_r) / float(max_r - min_r) - 1.0
+            else:
+                reward = raw_r
+
+            # Do NOT change state; just signal a truncation so SB3 resets the env
+            info = {
+                "timed_out": True,
+                "action_taken": None,
+                "main_eqn": self.main_eqn,
+                "eqn_id": str(self.main_eqn),
+            }
+            return self.state, reward, False, True, info
+        finally:
+            # Always clear the alarm & restore previous handler
+            signal.setitimer(signal.ITIMER_REAL, 0.0)
+            signal.signal(signal.SIGALRM, prev)
+
 
     # ──────────────────────────────────────────────────────────────────────────
     # CoV: reuse x; push inverse mapping
