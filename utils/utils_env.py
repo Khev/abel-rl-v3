@@ -16,6 +16,291 @@ from torch_geometric.data import Data
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 from gymnasium import spaces
 
+
+class _BaseGraphExtractor(BaseFeaturesExtractor):
+    """
+    Shared utilities for graph extractors.
+    Expects obs:
+      - node_features: [B, N] integer IDs (pad=pad_id)
+      - edge_index:    [B, 2, E] (src, dst)
+      - node_mask:     [B, N] bool/int
+      - edge_mask:     [B, E] bool/int
+    Ignores any other keys if present (e.g., 'depth', 'action_history').
+    """
+    def __init__(
+        self,
+        observation_space: spaces.Dict,
+        features_dim: int,        # output feature dim (exposed to SB3 policy)
+        *,
+        vocab_min_id: int = -64,
+        vocab_max_id: int = 256,
+        pad_id: int = 99,
+        embed_dim: int = 64,
+        hidden_dim: int = 128,
+        K: int = 3,
+        pooling: str = "mean",
+        dropout: float = 0.0,
+        add_self_loops: bool = True,
+        residual: bool = True
+    ):
+        super().__init__(observation_space, features_dim=features_dim)
+        self.hidden_dim = int(hidden_dim)
+        self.K = int(K)
+        self.pooling = pooling.lower()
+        assert self.pooling in ("mean", "max")
+        self.dropout_p = float(dropout)
+        self.add_self_loops = bool(add_self_loops)
+        self.residual = bool(residual)
+
+        # Device (prefer CUDA, do not use MPS)
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        # Embedding (ID vocabulary)
+        self.vocab_min_id = int(vocab_min_id)
+        self.vocab_max_id = int(vocab_max_id)
+        self.pad_id = int(pad_id)
+
+        num_embeddings = (self.vocab_max_id - self.vocab_min_id + 1)
+        pad_idx_shifted = self.pad_id - self.vocab_min_id
+        if not (0 <= pad_idx_shifted < num_embeddings):
+            num_embeddings = max(num_embeddings, pad_idx_shifted + 1)
+
+        self.embed = nn.Embedding(
+            num_embeddings=num_embeddings,
+            embedding_dim=embed_dim,
+            padding_idx=pad_idx_shifted
+        )
+        self.embed_proj = nn.Linear(embed_dim, hidden_dim)
+
+        self.dropout = nn.Dropout(self.dropout_p)
+        self.act = nn.ReLU(inplace=True)
+
+        # cache for dtype-dependent constants
+        self._minus_inf = None
+        self._dtype_cache = None
+
+        self.to(self.device)
+
+    # ---------- helpers ----------
+    def _id_to_idx(self, node_ids: torch.Tensor) -> torch.Tensor:
+        return (node_ids.long() - self.vocab_min_id).clamp(min=0)
+
+    @staticmethod
+    def _to_device(x, device):
+        if isinstance(x, torch.Tensor):
+            return x.to(device, non_blocking=True)
+        return torch.from_numpy(x).to(device, non_blocking=True)
+
+    def _fetch_core(self, obs: dict):
+        """Pull + move the 4 required tensors to device."""
+        node_ids  = self._to_device(obs["node_features"], self.device)
+        edge_index= self._to_device(obs["edge_index"], self.device)
+        node_mask = self._to_device(obs["node_mask"], self.device)
+        edge_mask = self._to_device(obs["edge_mask"], self.device)
+
+        # make sure shapes are [B, ...]
+        if node_ids.ndim == 1:
+            node_ids = node_ids.unsqueeze(0)
+            node_mask = node_mask.unsqueeze(0)
+        if edge_index.ndim == 2:
+            edge_index = edge_index.unsqueeze(0)
+            edge_mask = edge_mask.unsqueeze(0)
+
+        node_idx = self._id_to_idx(node_ids) if node_ids.dtype != torch.long else node_ids.long()
+        return node_idx, edge_index.long(), node_mask.bool(), edge_mask.bool()
+
+    def _pool(self, h, node_mask):
+        if self.pooling == "mean":
+            denom = node_mask.sum(dim=1, keepdim=True).clamp(min=1).float()  # [B,1]
+            return (h * node_mask.unsqueeze(-1).float()).sum(dim=1) / denom
+        else:  # max
+            if self._minus_inf is None or self._dtype_cache != h.dtype:
+                self._minus_inf = torch.finfo(h.dtype).min
+                self._dtype_cache = h.dtype
+            masked = h.masked_fill(~node_mask.unsqueeze(-1), self._minus_inf)
+            return masked.max(dim=1).values
+
+
+# ------------------------------------------------------------
+# 1) GCN-like extractor (symmetric normalization, simple GCN)
+# ------------------------------------------------------------
+class GCNExtractor(_BaseGraphExtractor):
+    def __init__(
+        self,
+        observation_space: spaces.Dict,
+        *,
+        vocab_min_id: int = -64,
+        vocab_max_id: int = 256,
+        pad_id: int = 99,
+        embed_dim: int = 64,
+        hidden_dim: int = 128,
+        K: int = 3,
+        pooling: str = "mean",
+        dropout: float = 0.0,
+        add_self_loops: bool = True,
+        residual: bool = True,
+    ):
+        super().__init__(
+            observation_space, features_dim=hidden_dim,
+            vocab_min_id=vocab_min_id, vocab_max_id=vocab_max_id, pad_id=pad_id,
+            embed_dim=embed_dim, hidden_dim=hidden_dim, K=K, pooling=pooling,
+            dropout=dropout, add_self_loops=add_self_loops, residual=residual
+        )
+        # One weight per layer (GCN uses linear transform after aggregation)
+        self.layers = nn.ModuleList([
+            nn.Linear(hidden_dim, hidden_dim) for _ in range(K)
+        ])
+        self.proj = nn.Identity()
+
+    def forward(self, obs: dict) -> torch.Tensor:
+        node_idx, edge_index, node_mask, edge_mask = self._fetch_core(obs)
+        B, N = node_idx.shape
+        _, _, E = edge_index.shape
+
+        # initial node states
+        emb = self.embed(node_idx)          # [B, N, embed_dim]
+        h = self.embed_proj(emb)            # [B, N, H]
+        h = h * node_mask.unsqueeze(-1).float()
+
+        # precompute indexers
+        src = edge_index[:, 0, :]           # [B, E]
+        dst = edge_index[:, 1, :]           # [B, E]
+        batch_idx = torch.arange(B, device=self.device).unsqueeze(1).expand(B, E).contiguous()
+
+        for l, layer in enumerate(self.layers):
+            # flatten valid edges
+            mask_flat  = edge_mask.reshape(-1)
+            src_flat   = src.reshape(-1)[mask_flat]          # [M]
+            dst_flat   = dst.reshape(-1)[mask_flat]          # [M]
+            batch_flat = batch_idx.reshape(-1)[mask_flat]    # [M]
+
+            # linearize node indices
+            src_lin = batch_flat * N + src_flat              # [M]
+            dst_lin = batch_flat * N + dst_flat              # [M]
+
+            # degrees (in for dst, out for src)
+            ones = torch.ones_like(src_lin, dtype=h.dtype, device=self.device)
+            h_flat = h.reshape(B * N, self.hidden_dim)
+
+            deg_src = torch.zeros(B * N, dtype=h.dtype, device=self.device)  # out-degree
+            deg_dst = torch.zeros(B * N, dtype=h.dtype, device=self.device)  # in-degree
+            deg_src.index_add_(0, src_lin, ones)
+            deg_dst.index_add_(0, dst_lin, ones)
+
+            # messages with symmetric norm: 1/sqrt(deg_src*deg_dst)
+            eps = 1e-6
+            norm = 1.0 / torch.sqrt((deg_src[src_lin] + eps) * (deg_dst[dst_lin] + eps))  # [M]
+            msg = h_flat[src_lin] * norm.unsqueeze(-1)  # [M, H]
+
+            # aggregate to dst
+            agg = torch.zeros_like(h_flat)             # [B*N, H]
+            agg.index_add_(0, dst_lin, msg)
+            agg = agg.reshape(B, N, self.hidden_dim)
+
+            # optional self-loops (add self features)
+            if self.add_self_loops:
+                agg = agg + h
+
+            # linear + nonlin + dropout
+            h_next = layer(agg)
+            h_next = self.act(h_next)
+            h_next = self.dropout(h_next)
+
+            # residual & mask
+            if self.residual:
+                h = (h_next + h) * node_mask.unsqueeze(-1).float()
+            else:
+                h = h_next * node_mask.unsqueeze(-1).float()
+
+        g = self._pool(h, node_mask)  # [B, H]
+        return self.proj(g)
+
+
+# ------------------------------------------------------------
+# 2) GraphSAGE (mean aggregator)
+# ------------------------------------------------------------
+class GraphSAGEExtractor(_BaseGraphExtractor):
+    def __init__(
+        self,
+        observation_space: spaces.Dict,
+        *,
+        vocab_min_id: int = -64,
+        vocab_max_id: int = 256,
+        pad_id: int = 99,
+        embed_dim: int = 64,
+        hidden_dim: int = 128,
+        K: int = 3,
+        pooling: str = "mean",
+        dropout: float = 0.0,
+        add_self_loops: bool = True,
+        residual: bool = True,
+    ):
+        super().__init__(
+            observation_space, features_dim=hidden_dim,
+            vocab_min_id=vocab_min_id, vocab_max_id=vocab_max_id, pad_id=pad_id,
+            embed_dim=embed_dim, hidden_dim=hidden_dim, K=K, pooling=pooling,
+            dropout=dropout, add_self_loops=add_self_loops, residual=residual
+        )
+        # SAGE uses concat([h, agg]) then linear
+        self.layers = nn.ModuleList([
+            nn.Linear(2 * hidden_dim, hidden_dim) for _ in range(K)
+        ])
+        self.proj = nn.Identity()
+
+    def forward(self, obs: dict) -> torch.Tensor:
+        node_idx, edge_index, node_mask, edge_mask = self._fetch_core(obs)
+        B, N = node_idx.shape
+        _, _, E = edge_index.shape
+
+        # initial node states
+        emb = self.embed(node_idx)          # [B, N, embed_dim]
+        h = self.embed_proj(emb)            # [B, N, H]
+        h = h * node_mask.unsqueeze(-1).float()
+
+        src = edge_index[:, 0, :]           # [B, E]
+        dst = edge_index[:, 1, :]           # [B, E]
+        batch_idx = torch.arange(B, device=self.device).unsqueeze(1).expand(B, E).contiguous()
+
+        for l, layer in enumerate(self.layers):
+            mask_flat  = edge_mask.reshape(-1)
+            src_flat   = src.reshape(-1)[mask_flat]          # [M]
+            dst_flat   = dst.reshape(-1)[mask_flat]          # [M]
+            batch_flat = batch_idx.reshape(-1)[mask_flat]    # [M]
+
+            src_lin = batch_flat * N + src_flat
+            dst_lin = batch_flat * N + dst_flat
+
+            h_flat = h.reshape(B * N, self.hidden_dim)
+            ones = torch.ones_like(src_lin, dtype=h.dtype, device=self.device)
+
+            # sum of neighbor features at dst
+            agg_flat = torch.zeros_like(h_flat)             # [B*N, H]
+            agg_flat.index_add_(0, dst_lin, h_flat[src_lin])
+
+            # in-degree per dst to form mean
+            deg_dst = torch.zeros(B * N, dtype=h.dtype, device=self.device)
+            deg_dst.index_add_(0, dst_lin, ones)
+            deg_dst = deg_dst.clamp(min=1.0).unsqueeze(-1)   # [B*N,1]
+
+            agg = (agg_flat / deg_dst).reshape(B, N, self.hidden_dim)
+
+            if self.add_self_loops:
+                agg = agg + h
+
+            h_cat = torch.cat([h, agg], dim=-1)             # [B, N, 2H]
+            h_next = layer(h_cat)
+            h_next = self.act(h_next)
+            h_next = self.dropout(h_next)
+
+            if self.residual:
+                h = (h_next + h) * node_mask.unsqueeze(-1).float()
+            else:
+                h = h_next * node_mask.unsqueeze(-1).float()
+
+        g = self._pool(h, node_mask)  # [B, H]
+        return self.proj(g)
+
+
 class TreeMLPExtractor(BaseFeaturesExtractor):
     def __init__(
         self,

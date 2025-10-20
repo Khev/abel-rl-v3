@@ -40,7 +40,7 @@ from stable_baselines3.common.base_class import BaseAlgorithm
 from rllte.xplore.reward import E3B, ICM, NGU, RE3, RIDE, RND
 
 # --- Custom extractor ---
-from utils.utils_env import TreeMLPExtractor
+from utils.utils_env import TreeMLPExtractor, GCNExtractor, GraphSAGEExtractor
 from utils.utils_general import print_parameters
 from utils.utils_train import timed_print
 
@@ -340,7 +340,10 @@ def make_env(
     use_action_mask: bool = False,
     use_success_replay: bool = False,
 ):
-    state_rep = 'graph_integer_1d' if 'tree' in agent else 'integer_1d'
+    #state_rep = 'graph_integer_1d' if 'tree' in agent else 'integer_1d'
+    use_graph = any(tok in agent.split('-') for tok in ('tree','gnn','sage'))
+    state_rep = 'graph_integer_1d' if use_graph else 'integer_1d'
+
     if env_name == 'single_eqn':
         env = singleEqn(main_eqn='a*x+b', state_rep=state_rep)
     elif env_name == 'multi_eqn':
@@ -417,7 +420,125 @@ def _infer_tree_limits_from_space(obs_space: spaces.Space) -> Tuple[int, int]:
             return max_nodes, max_edges
     return 128, 256
 
+
 def make_agent(
+    agent: str,
+    env,
+    hidden_dim: int,
+    seed: int = 0,
+    load_path: Optional[str] = None,
+    tree_kwargs: Optional[Dict[str, Any]] = None,
+    action_space: str = 'fixed',
+    ent_coef = 0.01
+):
+    """Create or load a PPO/MaskablePPO agent."""
+    if load_path and os.path.isfile(load_path):
+        timed_print(f"[{agent}] Loading model from: {load_path}")
+        if action_space == 'dynamic':
+            return MaskablePPO.load(load_path, env=env, device="auto", print_system_info=False, ent_coef=ent_coef)
+        return PPO.load(load_path, env=env, device="auto", print_system_info=False)
+
+    # ---- Decide extractor from agent string (backward compatible) ----
+    tokens = set(agent.split('-'))
+    use_tree = 'tree' in tokens                      # e.g. ppo-tree, ppo-tree-ICM
+    use_gnn  = 'gnn' in tokens                       # e.g. ppo-gnn, ppo-gnn-RND
+    use_sage = ('sage' in tokens) or ('graphsage' in tokens)
+
+    # If none of the above → original MLP branch
+    if not (use_tree or use_gnn or use_sage):
+        policy_kwargs = dict(net_arch=[hidden_dim, hidden_dim])
+        if action_space == 'dynamic':
+            return MaskablePPO('MlpPolicy', env=env, policy_kwargs=policy_kwargs, seed=seed, verbose=0, n_steps=2048, ent_coef=ent_coef)
+        return PPO('MlpPolicy', env=env, policy_kwargs=policy_kwargs, seed=seed, verbose=0, n_steps=2048, ent_coef=ent_coef)
+
+    # ---- Graph extractors (TreeMLP / GCN / GraphSAGE) ----
+    # Defaults (can be overridden via tree_kwargs)
+    tkw = dict(
+        embed_dim      = 32,
+        hidden_dim     = 64,
+        K              = 2,
+        pooling        = "mean",
+        vocab_min_id   = -10,
+        pad_id         = 99,
+        pi_sizes       = [128],
+        vf_sizes       = [128],
+        # optional extras understood by the GNN extractors:
+        # dropout        = 0.0,
+        # add_self_loops = True,
+        # residual       = True,
+    )
+    if tree_kwargs:
+        tkw.update({k: v for k, v in tree_kwargs.items() if v is not None})
+
+    # Import extractors (TreeMLP already in your project; GNNs in utils.gnn_extractors)
+    # from utils.utils_env import TreeMLPExtractor,
+    # try:
+    #     from utils.utils_env import GCNExtractor, GraphSAGEExtractor
+    # except Exception:
+    #     # If file not present, you can keep TreeMLP only
+    #     GCNExtractor = GraphSAGEExtractor = None
+
+    # Per-extractor class & kwargs
+    if use_tree:
+        fx_class = TreeMLPExtractor
+        # TreeMLP expects max_nodes/max_edges derived from the obs space
+        max_nodes, max_edges = _infer_tree_limits_from_space(env.observation_space)
+        fx_kwargs = dict(
+            max_nodes=max_nodes,
+            max_edges=max_edges,
+            vocab_min_id=tkw["vocab_min_id"],
+            pad_id=tkw["pad_id"],
+            embed_dim=tkw["embed_dim"],
+            hidden_dim=tkw["hidden_dim"],
+            K=tkw["K"],
+            pooling=tkw["pooling"],
+        )
+    elif use_gnn:
+        assert GCNExtractor is not None, "GCNExtractor not found. Ensure utils/gnn_extractors.py is available."
+        fx_class = GCNExtractor
+        # GCNExtractor does NOT need max_nodes/max_edges in __init__
+        fx_kwargs = dict(
+            vocab_min_id=tkw["vocab_min_id"],
+            pad_id=tkw["pad_id"],
+            embed_dim=tkw["embed_dim"],
+            hidden_dim=tkw["hidden_dim"],
+            K=tkw["K"],
+            pooling=tkw["pooling"],
+            # optional:
+            # dropout=tkw.get("dropout", 0.0),
+            # add_self_loops=tkw.get("add_self_loops", True),
+            # residual=tkw.get("residual", True),
+        )
+    else:  # use_sage
+        assert GraphSAGEExtractor is not None, "GraphSAGEExtractor not found. Ensure utils/gnn_extractors.py is available."
+        fx_class = GraphSAGEExtractor
+        fx_kwargs = dict(
+            vocab_min_id=tkw["vocab_min_id"],
+            pad_id=tkw["pad_id"],
+            embed_dim=tkw["embed_dim"],
+            hidden_dim=tkw["hidden_dim"],
+            K=tkw["K"],
+            pooling=tkw["pooling"],
+            # optional:
+            # dropout=tkw.get("dropout", 0.0),
+            # add_self_loops=tkw.get("add_self_loops", True),
+            # residual=tkw.get("residual", True),
+        )
+
+    kwargs = dict(
+        features_extractor_class=fx_class,
+        features_extractor_kwargs=fx_kwargs,
+        net_arch=dict(pi=tkw["pi_sizes"], vf=tkw["vf_sizes"]),
+    )
+
+    if action_space == 'dynamic':
+        return MaskablePPO(policy="MultiInputPolicy", env=env, policy_kwargs=kwargs, verbose=0, seed=seed, n_steps=2048, ent_coef=ent_coef)
+
+    return PPO(policy="MultiInputPolicy", env=env, policy_kwargs=kwargs, verbose=0, seed=seed, n_steps=2048, ent_coef=ent_coef)
+
+
+
+def make_agent_old(
     agent: str,
     env,
     hidden_dim: int,
@@ -924,7 +1045,7 @@ if __name__ == "__main__":
     env_group = parser.add_argument_group("Environment")
     env_group.add_argument('--env_name', type=str, default='multi_eqn', help='Environment name')
     env_group.add_argument('--action_space', type=str, default='dynamic', help='Action space: fixed or dynamic')
-    env_group.add_argument('--gen', type=str, default='test_cov2', help='Equation generator')
+    env_group.add_argument('--gen', type=str, default='abel_level4', help='Equation generator')
     env_group.add_argument('--sparse_rewards', action='store_true', help='Use sparse rewards instead of shaping')
     env_group.add_argument('--use_curriculum', action='store_true', help='Use inverse sampling curriculum')
     env_group.add_argument('--use_relabel_constants', action='store_true', help='Enable relabel-constants macroaction')
@@ -934,9 +1055,9 @@ if __name__ == "__main__":
 
     train_group = parser.add_argument_group("Training")
     train_group.add_argument('--Ntrain', type=int, default=10**7, help='Total training timesteps')
-    train_group.add_argument('--n_trials', type=int, default=1, help='Number of trials per agent')
-    train_group.add_argument('--n_workers', type=int, default=1, help='Number of parallel workers')
-    train_group.add_argument('--base_seed', type=int, default=1, help='Base seed')
+    train_group.add_argument('--n_trials', type=int, default=3, help='Number of trials per agent')
+    train_group.add_argument('--n_workers', type=int, default=3, help='Number of parallel workers')
+    train_group.add_argument('--base_seed', type=int, default=16, help='Base seed')
     train_group.add_argument('--n_envs', type=int, default=1, help='Number of parallel envs for training (VecEnv)')
     train_group.add_argument('--ent_coef', type=float, default=0.01)
 
@@ -975,8 +1096,8 @@ if __name__ == "__main__":
     env_name   = args.env_name
     agents     = args.agents
     Ntrain     = args.Ntrain
-    eval_int   = args.eval_interval if args.eval_interval > 0 else max(1, Ntrain // 100)
-    log_int    = args.log_interval  if args.log_interval  > 0 else max(1, Ntrain // 100)
+    eval_int   = args.eval_interval if args.eval_interval > 0 else max(1, Ntrain // 20)
+    log_int    = args.log_interval  if args.log_interval  > 0 else max(1, Ntrain // 20)
     n_trials   = args.n_trials
     base_seed  = args.base_seed
     n_workers  = args.n_workers
@@ -987,10 +1108,12 @@ if __name__ == "__main__":
     load_model_path = args.load_model_path
 
     # DIR_save
-    base = 'data'
-    if args.action_space == 'dynamic': base += '/dynamic_actions/'
+    base = 'data/'
+    if args.action_space == 'dynamic': base += 'dynamic_actions/'
     if args.use_relabel_constants: base += 'use_relabel_constants/'
     if args.use_success_replay: base += 'use_buffer/'
+    if not args.use_curriculum: base += 'no_curriculum/'
+    if args.sparse_rewards: base += 'sparse_rewards/'
     save_root = base + save_root
 
     tree_kwargs = dict(
@@ -1011,7 +1134,7 @@ if __name__ == "__main__":
             bump, curiosity_local = 0, None
         else:
             curiosity_type = agent.split('-')[-1]
-            bump = {'ICM': 1000, 'E3B': 2000, 'RIDE': 3000, 'RND': 4000, 'RE3': 5000, 'NGU': 6000, 'tree': 7000}.get(curiosity_type, 0)
+            bump = {'ICM': 1000, 'E3B': 2000, 'RIDE': 3000, 'RND': 4000, 'RE3': 5000, 'NGU': 6000, 'tree': 7000, 'gnn':8000, 'sage':9000}.get(curiosity_type, 0)
             curiosity_local = curiosity_type if curiosity_type in {'ICM','E3B','RIDE','RND','RE3','NGU'} else None
         for t in range(n_trials):
             seed = base_seed + 1000 * t + bump
