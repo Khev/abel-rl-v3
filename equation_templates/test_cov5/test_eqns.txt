@@ -1,0 +1,10 @@
+a*x + b*x**2 + c
+a*x**4 + a*x**3 + 3*a*x**2/8 + a*x/16 + c
+a*x**3 + b*x**2 + d + b**2*x/(3*a)
+a*x**3 + b + d*x**2 + d**2*x/(3*a)
+a*x**2 + a + b*x
+c + d*exp(x) + d*exp(-x)
+a*exp(-x) + b + d*exp(x)
+a*x**2 + b*x + c
+a**2*x/(3*b) + a*x**2 + b*x**3 + d
+b*x**4 + b + c*x**3 + 3*c**2*x**2/(8*b) + c**3*x/(16*b**2)
