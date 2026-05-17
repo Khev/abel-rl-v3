@@ -62,7 +62,7 @@ def aggregate(group_runs, metric):
     return common_t, stack.mean(0), stack.min(0), stack.max(0)
 
 
-def plot(groups, out_path, title):
+def plot(groups, out_path, title, xlim=None):
     """groups = dict {label: [dir, dir, ...]}."""
     # decide metrics by inspecting first valid group
     first_runs = next((load_group(v) for v in groups.values() if v), [])
@@ -85,6 +85,8 @@ def plot(groups, out_path, title):
             ax.fill_between(t, lo, hi, color=color, alpha=0.18)
         ax.set_title(metric)
         ax.set_ylim(-0.02, 1.02)
+        if xlim is not None:
+            ax.set_xlim(0, xlim)
         ax.grid(alpha=0.3)
         ax.legend(loc="lower right", fontsize=8)
     axes[2].set_xlabel("step")
@@ -101,6 +103,9 @@ def main():
     p.add_argument("--title", default="")
     p.add_argument("--group", action="append", required=True,
                    help='format: "label:dir1,dir2,dir3"; repeatable')
+    p.add_argument("--xlim", type=float, default=None,
+                   help="cap x-axis at this many steps (fair comparison when "
+                        "runs have different Ntrain)")
     args = p.parse_args()
 
     groups = {}
@@ -114,7 +119,7 @@ def main():
 
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     title = args.title or f"ablation across {len(groups)} configs"
-    plot(groups, args.out, title)
+    plot(groups, args.out, title, xlim=args.xlim)
 
 
 if __name__ == "__main__":
