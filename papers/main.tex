@@ -214,14 +214,14 @@ When invoked, it applies a consistent partial renaming (e.g., $\{d\!\mapsto\!a,\
 \begin{table}[t!]
 \centering
 \footnotesize
-\caption{Greedy test accuracy for each agent across dataset. Single-seed results except where noted; ConPoLe / ConPoLe-local numbers from \cite{poesia2021contrastive}. ``--'' denotes a cell awaiting a multi-seed re-run.}
+\caption{Greedy test accuracy for each agent across dataset. Single-seed results; ConPoLe / ConPoLe-local numbers from~\cite{poesia2021contrastive}. ``--'' denotes a cell awaiting a multi-seed re-run.}
 \begin{tabular}{l c c c}
 \toprule
 Algorithm & small & large & poesia \\
 \midrule
 ConPoLe-local    & n/a   & n/a   & 0.765 \\
 ConPoLe          & --    & --    & 0.925 \\
-ppo              & 0.04  & 0.02  & --    \\
+ppo              & 0.04  & 0.02  & 0.17  \\
 ppo-tree         & --    & --    & 0.815 \\
 ppo-tree-rc      & 0.90  & --    & 0.96  \\
 ppo-tree-rc-buf  & 0.80  & 0.44  & --    \\
