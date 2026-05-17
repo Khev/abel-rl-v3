@@ -84,7 +84,7 @@
 
 % The \icmltitle you define below is probably too long as a header.
 % Therefore, a short form for the running title is supplied here:
-\icmltitlerunning{Submission and Formatting Instructions for ICML 2025}
+\icmltitlerunning{Reinforcement learning for symbolic mathematics}
 
 \begin{document}
 
@@ -114,7 +114,7 @@
 
 \icmlcorrespondingauthor{Kevin, O'Keeffe}{kevin.p.okeeffe@gmail.com}
 
-\icmlkeywords{Symbolic mathematic, Reinforcement learning}
+\icmlkeywords{Symbolic mathematics, Reinforcement learning}
 
 \vskip 0.3in
 ]
@@ -131,7 +131,7 @@
 \printAffiliationsAndNotice{\icmlEqualContribution} % otherwise use the standard text.
 
 \begin{abstract}
-We explore if RL can be useful for symbolic mathematics. Previous work showed contrastive learning can solve linear equations in one variable. We show model-free PPO \cite{schulman2017proximal} augmented with curiosity-based exploration and graph-based actions can solve nonlinear equations such as those involving radicals, exponentials, and trig functions. Our work suggests curiosity-based exploration may be useful for general symbolic reasoning tasks.
+We explore whether reinforcement learning (RL) can be useful for symbolic mathematics. Previous work showed contrastive learning can solve linear equations in one variable. We show that model-free PPO~\cite{schulman2017proximal} combined with a graph-based policy (TreeMLP), a dynamic per-state action space, and lightweight inductive biases (curriculum, success replay, constant relabeling) can solve nonlinear equations involving radicals, exponentials, and trigonometric functions---reaching or exceeding state-of-the-art accuracy on the CommonCore benchmark. We further consider \emph{open} equations whose solution requires a generative change-of-variables, and train a separate substitution policy $\pi_{\text{cov}}$ to handle them.
 \end{abstract}
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -194,7 +194,7 @@ The intuition here is to encourage the agent to take actions which simplify the 
   \label{learning_curves_closed}
 \end{figure*}
 
-We use a number of inductive biases improve learning
+We use a number of inductive biases to improve learning.
 
 \textbf{TreeMLP}. We use a custom \textit{TreeMLP} architecture to exploit the expression-tree structure of our equations (nodes are tokens/operators; edges are parent$\to$child). Each node ID is embedded and linearly projected to a hidden size, then we perform $K$ rounds of message passing with a simple sum aggregator over incoming edges (no degree normalization). At round $t$, a node’s representation is updated by applying a two-layer MLP with ReLU to the concatenation of its static embedding and the aggregated message, i.e., $h^{(t+1)}_i = \mathrm{MLP}\!\left(\bigl[\mathrm{emb}_i \,\big\|\, \sum_{j\to i} h^{(t)}_j\bigr]\right)$. Padding-aware masks zero out invalid nodes and edges at every stage. After $K$ iterations, we obtain a fixed-size graph feature by pooling (mean or max) over valid node states, which is fed to the policy/value heads. Compared to standard GCN/SAGE extractors, TreeMLP avoids degree normalization and learned edge transforms, yielding a lightweight, strictly local update that aligns well with symbolic expression trees and trains stably with PPO. 
 
@@ -236,7 +236,7 @@ ppo-tree-rc-buf  & 0.80  & 0.44  & --    \\
 
 \textit{Results}. Figure~\ref{learning_curves_closed} shows the learning curve for each algorithm on all three datasets. We plot three performance metrics: (i) coverage, the fraction of train equations solved at least once, (ii) test accuracy following the greedy policy, (iii) and test accuracy following beam search of width 5.  The top row shows the CommonCore datasets (with coverage excluded since the train set is random and unbounded). The dashed black lines show the results for ConPoLe-local and ConPoLe from \cite{poesia2021contrastive}; these are the SOTA for symbolic equation solving. Notice our vanilla ppo-tree beats ConPoLe-local, while our inductive biases (ppo-tree-rc) beats ConPoLe. Table~\ref{tab:test_greedy} reports the exact numbers. 
 
-The bottom two rows show the results for our the small and large datasets. For the small datasets, all four methods achieve perfect coverage, but only ppo-tree-rc and ppo-tree-rc-buf gives the highest $test_{greedy}$ and $test_{beam}$. For the large dataset, only ppo-tree-rc-buf and ppo-tree-buff have large coverage, and decent test accuracy $test_{beam} \approx 0.5$. By comparison, notice that $test_{greedy}, test_{beam} \approx 0, 0$ for ppo-tree and ppo-tree-rc. 
+The bottom two rows show the results on our small and large datasets. For the small dataset, all four methods achieve near-perfect coverage on the training set, but only \textsc{ppo-tree-rc} and \textsc{ppo-tree-rc-buf} achieve high test accuracy under greedy decoding ($\geq 0.80$). For the large dataset, only \textsc{ppo-tree-rc-buf} attains both broad coverage and a usable test accuracy ($\text{test}_{\text{beam}} \approx 0.66$); vanilla \textsc{ppo-tree} and \textsc{ppo-tree-rc} collapse to near-zero greedy accuracy on the large set, suggesting the success-replay buffer is the critical ingredient at scale. 
 
 The takeaway is that our inductive biases help in each case, and are comparable to the SOTA. 
 
@@ -344,16 +344,7 @@ We train a CoV agent using PPO with TreeMLP. Figure~\ref{cov_results} shows the 
 
 \section*{Impact Statement}
 
-Authors are \textbf{required} to include a statement of the potential 
-broader impact of their work, including its ethical aspects and future 
-societal consequences. This statement should be in an unnumbered 
-section at the end of the paper (co-located with Acknowledgements -- 
-the two may appear in either order, but both must be before References), 
-and does not count toward the paper page limit. In many cases, where 
-the ethical impacts and expected societal implications are those that 
-are well established when advancing the field of Machine Learning, 
-substantial discussion is not required, and a simple statement such 
-as the following will suffice:
+This paper presents work whose goal is to advance the field of machine learning, specifically the application of reinforcement learning to symbolic mathematics. There are many potential societal consequences of our work, none which we feel must be specifically highlighted here.
 
 \nocite{langley00}
 
@@ -366,13 +357,14 @@ as the following will suffice:
 
 
 \subsection{Macroactions}
-Here we justify why the three macroactions $$(expand, none), (collect, x), (mul,-1)$$ discussed in the main text are \textit{required} to solve the equations we consider, and are not simple conveniences for the RL agent. Consider the action set \textit{without} these macroactions, which we requote below
+Here we justify why the three macroactions $(\op{expand}, \text{None})$, $(\op{collect}, x)$, $(\op{mul}, -1)$ discussed in the main text are \textit{required} to solve the equations we consider, not mere conveniences for the RL agent. Consider the action set \textit{without} these macroactions:
 \begin{align}
-O &= \{\,\op{add},\ \op{subtract},\ \op{mul},\ \op{divide}\,\} \cup  \{\, \op{square}, \op{sqrt},\ \op{exp},\ \op{log}, \op{sin},\ \op{cos}\, \op{asin},\ \op{acos}\,\} \\
-T   &= \SubExpr(\text{lhs}) \cup \SubExpr(\text{rhs}), \\
-A   &= (O \times T) \cup \{(Expand, None)\} \{(\op{collect}, x)\} \cup \{(\op{multiply}, -1)\}.
+O &= \{\op{add},\ \op{sub},\ \op{mul},\ \op{div}\} \nonumber \\
+  &\quad \cup \{\op{square},\ \op{sqrt},\ \op{exp},\ \op{log},\ \op{sin},\ \op{cos},\ \op{asin},\ \op{acos}\}, \\
+T &= \SubExpr(\text{lhs}) \cup \SubExpr(\text{rhs}), \\
+A &= (O \times T).
 \end{align}
-Now consider the equation $dx + c(ax+b) = e$. One must distribute $c$ into the bracketed term $ax+b$. The action set above cannot do this. One needs the $expand$ macroaction for this. Moreover, once the term is expanded we get $dx+cax+cb = e$ and one needs to factor the $x$ common to both the first and second terms. $collect x$ performs this function. Finally, consider the equation $-x = b$. Since $-1$ is not included in our term set, one needs $(mul,-1)$ to solve the equation. (One could alternatively add $-1$ to the term set but we chose not to.)
+Now consider the equation $dx + c(ax+b) = e$. The agent must distribute $c$ into the bracketed term $ax+b$, which the action set above cannot do: $\op{expand}$ is required. Once expanded to $dx + cax + cb = e$, one needs to factor the $x$ common to the first two terms---this is what $(\op{collect}, x)$ provides. Finally, consider $-x = b$: since $-1$ is not in our term set, $(\op{mul}, -1)$ is needed to isolate $x$. (Alternatively, $-1$ could be added to the term set, but we chose to keep the term set purely symbolic.)
 
 
 \subsection{Dataset generation: Rational Equation  }
@@ -400,7 +392,7 @@ Examples of retained equations include:
 These rational forms were merged into both the small and large datasets, with their proportion limited to preserve diversity across other functional forms (logarithmic, trigonometric, exponential, etc.).
 
 \subsection{Illegal actions}
-The main issue was to avoid illegal division by zero. This was not as simple as precluding $(div,0)$ from the action set. One had to prohibit `hidden' division by zero, such as prohibiting division by $(x+a)$ or $(x+b)$ for an equation of form $(x+a)(x+b)$. To do this, we checked if the equation of form $P(x)Q(x)..$, where $P(x),Q(x)$ are polynomials in $x$, and then removed $(div, P, Q, ...)$ from the action set.
+The main issue was to avoid illegal division by zero. This is not as simple as precluding $(\op{div}, 0)$ from the action set. We also had to prohibit \emph{hidden} division by zero---for example, dividing by $(x+a)$ or $(x+b)$ when the equation has the form $(x+a)(x+b) = 0$, since one of the factors will vanish at the solution. To handle this, we check whether the current equation factors as $P(x) Q(x) \cdots = 0$ with $P, Q, \dots$ polynomial in $x$, and remove $(\op{div}, P), (\op{div}, Q), \dots$ from the action set for that state.
 
 \subsection{Hyperparameters}
 We used Stable Baselines 3's default hyperparameters for A2C and PPO (Table~\ref{hyperparams}).
