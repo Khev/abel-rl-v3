@@ -4,6 +4,36 @@
 
 Tasks are grouped by phase. Use `[ ]` / `[x]` to track. Each task has a rough size: S (≤1 day), M (2–4 days), L (1+ week).
 
+## Phase 0 — Closed-equations paper cleanup (parallel, opportunistic)
+
+The §3 results in `papers/paper.tex` are partly drafted on the *buggy* encoder (numeric atoms were silently dropped). With the fix shipped, all numbers need re-running, and several figures / table cells / placeholders are missing. This phase is parallel to the CoV work — runs can be queued in the background.
+
+### Re-runs (all on the FIXED encoder)
+- [ ] (L) Fill Table 1: 10 missing cells. Per-algorithm runs on `small` (1k/100 train/test) and `large` (10k/1k) closed-eq datasets, plus the existing `poesia` benchmark. Algorithms: ppo, ppo-tree, ppo-tree-rc, ppo-tree-rc-buf.
+- [ ] (S) Fill missing `ppo` × `poesia` cell (shows `..` in the draft).
+- [ ] (M) Beam search width: settle on a value and report consistently (draft has "beam search of XXX"). Audit `train_abel.py`'s beam implementation for bugs analogous to the ones we found in `train_cov.py`.
+
+### Figures
+- [ ] (L) `learning_curves_closed`: per-dataset × per-agent learning curves with min/max envelope across 3 seeds. Generate via `plot_seeds.py` on the re-run results.
+- [ ] (M) `gnn-comparison`: TreeMLP vs GCN vs GraphSAGE on the small dataset. Need to run `ppo-gnn` and `ppo-sage` agents.
+- [ ] (M) `curiosity-tree-hurts`: TreeMLP with/without curiosity (ICM/RND/etc.) on small dataset, to back the claim that "curiosity worsened learning with TreeMLP."
+- [ ] (S) Representation-learning figure (currently `\ref{}` placeholder, line 264) — embedding visualization (e.g., t-SNE / UMAP of node embeddings after training).
+
+### Content / analysis
+- [ ] (M) Failure analysis on closed-eq: cluster failure modes from a trained checkpoint, give representative traces. (TODO bullet line 268.)
+- [ ] (S) "Comment: this is done by X" placeholder (line 269) — figure out what was intended.
+- [ ] (S) Cite the prior curiosity-helps-with-MLP work (`\cite{}` line 208).
+
+### Polish (paper.tex, all small)
+- [ ] (S) Fix broken LaTeX in TreeMLP description (line 197): `\mathrm{MLP}!\left([\mathrm{emb}i ,|, \sum{j\to i} h^{(t)}_j]\right)` — should be `\mathrm{MLP}\!\left([\mathrm{emb}_i, \,\big\|\, \sum_{j\to i} h^{(t)}_j]\right)` or similar.
+- [ ] (S) Pick a single name and stick to it: `ppo-tree-rc-buf` vs `ppo-tree-rc-buff`.
+- [ ] (S) Fix typo: `ppp-tree` (line 236) → `ppo-tree`.
+- [ ] (S) Verify the inline claims about Table 1 numbers ("ppo-tree-rc-buf beats ConPole") once the cells are filled.
+
+### Methodological notes (don't forget)
+- Existing pre-fix results in `data/dynamic_actions/abel_level*/` are obsolete for the headline numbers. Keep them around as a "buggy encoder" historical reference but report only the post-fix runs.
+- The `papers/paper.tex` is the canonical version; `gemini/paper.tex` is a near-duplicate (3 lines differ).
+
 ## Phase 1 — Scope & data (weeks 1–2)
 
 ### Equation taxonomy

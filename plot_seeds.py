@@ -20,50 +20,68 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 
-METRICS = ["train_greedy_acc", "train_beam_acc", "test_greedy_acc", "test_beam_acc"]
+METRICS_COV = ["train_greedy_acc", "train_beam_acc", "test_greedy_acc", "test_beam_acc"]
+METRICS_ABEL = ["coverage", "test_greedy", "test_beam", "test_at10"]
 
 
 def load_runs(dirs):
+    """Load runs from either train_cov format (accuracies.csv) or
+    train_abel format (learning_curves.csv).
+    Returns list of (label, df, time_col, metrics_list)."""
     runs = []
     for d in dirs:
-        p = Path(d) / "accuracies.csv"
-        if not p.exists():
-            print(f"[warn] no accuracies.csv in {d}", file=sys.stderr)
-            continue
-        df = pd.read_csv(p)
-        runs.append((str(d), df))
+        d = Path(d)
+        # Try train_cov format first
+        p1 = d / "accuracies.csv"
+        p2 = d / "learning_curves.csv"
+        if p1.exists():
+            df = pd.read_csv(p1)
+            runs.append((str(d), df, "timesteps", METRICS_COV))
+        elif p2.exists():
+            df = pd.read_csv(p2)
+            runs.append((str(d), df, "step", METRICS_ABEL))
+        else:
+            print(f"[warn] no accuracies.csv or learning_curves.csv in {d}",
+                  file=sys.stderr)
     return runs
 
 
 def plot(runs, out_path, title):
+    # all runs share the same metrics list (we assume one format per call)
+    metrics = runs[0][3]
+    time_col = runs[0][2]
     fig, axes = plt.subplots(2, 2, figsize=(11, 8), sharex=True)
     axes = axes.flatten()
-    for ax, metric in zip(axes, METRICS):
-        # individual seeds
-        for label, df in runs:
-            ax.plot(df["timesteps"], df[metric], alpha=0.35, linewidth=1)
+    for ax, metric in zip(axes, metrics):
+        for label, df, _, _ in runs:
+            if metric in df.columns:
+                ax.plot(df[time_col], df[metric], alpha=0.35, linewidth=1)
         # mean ± min/max envelope across seeds
         if len(runs) >= 2:
-            common_t = runs[0][1]["timesteps"].values
+            common_t = runs[0][1][time_col].values
             stack = []
-            for _, df in runs:
-                if not np.array_equal(df["timesteps"].values, common_t):
-                    # interpolate if timesteps don't align
-                    y = np.interp(common_t, df["timesteps"].values, df[metric].values)
+            for _, df, _, _ in runs:
+                if metric not in df.columns:
+                    continue
+                t = df[time_col].values
+                if not np.array_equal(t, common_t):
+                    y = np.interp(common_t, t, df[metric].values)
                 else:
                     y = df[metric].values
                 stack.append(y)
-            stack = np.stack(stack, axis=0)
-            mean = stack.mean(axis=0)
-            lo, hi = stack.min(axis=0), stack.max(axis=0)
-            ax.plot(common_t, mean, color="black", linewidth=2, label=f"mean (n={len(runs)})")
-            ax.fill_between(common_t, lo, hi, color="black", alpha=0.12, label="min/max")
-            ax.legend(loc="lower right", fontsize=8)
+            if stack:
+                stack = np.stack(stack, axis=0)
+                mean = stack.mean(axis=0)
+                lo, hi = stack.min(axis=0), stack.max(axis=0)
+                ax.plot(common_t, mean, color="black", linewidth=2,
+                        label=f"mean (n={len(stack)})")
+                ax.fill_between(common_t, lo, hi, color="black", alpha=0.12, label="min/max")
+                ax.legend(loc="lower right", fontsize=8)
         ax.set_title(metric)
         ax.set_ylim(-0.02, 1.02)
         ax.grid(alpha=0.3)
-    axes[2].set_xlabel("timesteps")
-    axes[3].set_xlabel("timesteps")
+    axes[2].set_xlabel(time_col)
+    axes[3].set_xlabel(time_col)
     fig.suptitle(title, fontsize=11)
     fig.tight_layout()
     fig.savefig(out_path, dpi=120)
