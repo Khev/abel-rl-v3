@@ -703,15 +703,19 @@ def sympy_expression_to_list(expr, feature_dict, max_length):
     while stack and index < max_length:
         node = stack.pop()
 
-        if isinstance(node, (int, float)):  # ✅ Handle numbers explicitly
-            elements[index] = feature_dict.get(node, len(feature_dict))  # Assign new ID if missing
-            feature_dict[node] = elements[index]  # Store it to avoid reassignments
+        if node.is_Symbol if hasattr(node, "is_Symbol") else False:
+            elements[index] = feature_dict.get(node, 0)
             index += 1
-        elif node.is_Symbol:
-            elements[index] = feature_dict.get(node, 0)  # Default to 0 if missing
+        elif isinstance(node, (int, float)) or isinstance(node, Number) or node in feature_dict:
+            # Numeric atoms (incl. SymPy Integer/Float/Rational) and known constants
+            # MUST be looked up here — otherwise the `is_Atom` branch below silently
+            # drops them, collapsing equations like `2*b*x` and `4*b*x` to the same
+            # encoding.
+            elements[index] = feature_dict.get(node, len(feature_dict))
+            feature_dict[node] = elements[index]
             index += 1
-        elif node.is_Atom:
-            continue  # Skip special cases like `pi` or `E` if needed
+        elif hasattr(node, "is_Atom") and node.is_Atom:
+            continue  # Truly opaque atoms (no entry, no encoding)
         else:
             elements[index] = feature_dict.get(node.func.__name__.lower(), 0)
             index += 1
