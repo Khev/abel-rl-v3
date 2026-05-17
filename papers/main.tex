@@ -140,7 +140,7 @@ Reinforcement learning (RL) has been applied to diverse fields \citep{ng2006auto
 
 Applying RL to symbolic math is difficult because the state space is combinatorially large, as each equation can branch into numerous sub-expressions. The action space is also large and dynamic: at every step, the agent can apply various algebraic manipulations to different sub-expressions, so the number and type of actions change with the equation's form.
 
-We here show RL agents combined with curiosity-based exploration and an graph-based action space can overcome these challenges. The agents learn to solve a wide range of algebraic equations such as those involving radicals and trig functions. Though perhaps simple from a human perspective, solving such equations using RL is non-trivial and to our knowledge has never before been done. Moreover, they are a key building block for more advanced tasks like solving differential equations.
+We show that RL agents combined with a graph-based policy (TreeMLP), a dynamic per-state action space, and lightweight inductive biases (curriculum learning, success replay, constant relabeling) can overcome these challenges. The agents learn to solve a wide range of algebraic equations including those involving radicals, exponentials, and trigonometric functions. Although perhaps simple from a human perspective, solving such equations with RL is non-trivial and---to our knowledge---has not been done before. Symbolic equation solving is also a key building block for more advanced tasks like solving differential equations, the natural next step.
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -156,25 +156,24 @@ Our Markov Decision Process (MDP) formulation is
     \label{trees}
 \end{figure}
 
-\textbf{Actions}: represented as $(operation, term)$ pairs, such as $(sub, b)$ or $(div,a)$. Formally,
+\textbf{Actions}: represented as $(operation, term)$ pairs, such as $(\op{sub}, b)$ or $(\op{div}, a)$. Formally,
 \begin{align}
-O &= \{\,\op{add},\ \op{subtract},\ \op{mult},\ \op{divide}\,\} \nonumber \\
-   &= \cup  \{\op{square}, \ \op{sqrt},\ \op{exp},\ \op{log}, \op{sin}, \op{cos}\, \op{asin},\ \op{acos}\,\} \\
-T   &= \SubExpr(\text{lhs}) \cup \SubExpr(\text{rhs}), \\
-A   &= (O \times T) \cup \{(Expand, None),  (\op{collect}, x), (\op{multiply}, -1)\}.
+O &= \{\op{add},\ \op{sub},\ \op{mul},\ \op{div}\} \nonumber \\
+  &\quad \cup \{\op{square},\ \op{sqrt},\ \op{exp},\ \op{log},\ \op{sin},\ \op{cos},\ \op{asin},\ \op{acos}\}, \\
+T &= \SubExpr(\text{lhs}) \cup \SubExpr(\text{rhs}), \\
+A &= (O \times T) \cup \{(\op{expand}, \text{None}),\ (\op{collect}, x),\ (\op{mul}, -1)\}.
 \end{align}
 Notice the first set of operations take two arguments, the second one argument. For the terms, we choose the list of sub-expressions in the lhs and rhs expression trees. Example of sub-expressions are
 \begin{align}
 & ax+b=0 \Rightarrow \{a, x, ax, b\} & \quad  \\
 & \frac{ax+b}{cx+d}+e=0 \Rightarrow \{a, x, ax, b, c, d, cx, cx+d, ax+b\} 
 \end{align}
-This term set is expressive enough to solve rational equations and all other equation types we consider in this paper. It is also dynamic: the list of sub-expressions is derived from the equation/state and thus has variable length. Looping back to the operations, we also include $(mul,-1)$ and
+This term set is expressive enough to solve rational equations and all other equation types we consider in this paper. It is also dynamic: the list of sub-expressions is derived from the equation/state and thus has variable length. Looping back to the operations, we also include $(\op{mul}, -1)$ and
 \begin{align*}
-    & \text{expand:} \quad cx + d + e(ax + b) \rightarrow aex + be + cx + d = 0 \\
-    & \text{collect $x$:}  \quad  ax + bx \rightarrow (a + b)x \
-    %& \text{multiply by $-1$}  
+    & \text{expand:} && cx + d + e(ax + b) \to aex + be + cx + d \\
+    & \text{collect $x$:} && ax + bx \to (a + b)x
 \end{align*}
-These allow the agent to perform key algebraic steps (Appendix). Finally, we index the action set \(A\) serially, cap it at size \(|A|=50\) \footnote{We explored other values like $|A| = 40, 70, 100$ and found no changes in performance}, and mask illegal actions (e.g., division by zero, see Appendix). 
+These allow the agent to perform key algebraic steps (Appendix). Finally, we index the action set \(A\) serially, cap it at size \(|A|=50\)\footnote{We explored other values like $|A| \in \{40, 70, 100\}$ and found no measurable change in performance.} and mask illegal actions (e.g., division by zero, see Appendix). 
 
 \textit{Rewards}. Define the \textit{complexity} $C$ of an equation as the total number of nodes and edges in the expression tree \footnote{we judged number of nodes+edges correlates better with algebraic complexity than number of nodes alone.}. The complexities of the equations in Figure~\ref{trees} are $C(ax+b) = 5 + 4 = 9$ and $C(ax^2 + bx + c) =  10 + 9 = 19$. The reward is then
 \begin{align}
@@ -549,18 +548,17 @@ All tensors are moved to CUDA when available; no MPS is used.
 
 \subsection{Ablations}
 
-
-
+We summarize the ablation findings; the corresponding learning curves are in Figures~\ref{ablations} and~\ref{gnn-comparison}.
 \begin{itemize}
-    \item Figure~\ref{ablations} shows the ablation study. Turning off the dense rewards and the curriculum degrades performance. The main drawack of sprase rewards is \textit{far} longer run times. We had to include a max timeout of 1s per step in order to get the results to finish.  
-    \item Figure~\ref{gnn-comparison} shows the TreeMLP outperforms regular GNN and GraphSage; the Tree is necessary
-    \item Finally, Figure~\ref{ablations} shows adding curiosity degrades performance. This contrasts with earlier work~\cite{dabelow2024symbolic}, where regular PPO (non-tree) improves performance when augmented with curiosity.
+    \item Replacing dense complexity-delta rewards with sparse outcome-only rewards (and disabling the inverse-frequency curriculum) substantially degrades performance. The main drawback of sparse rewards is \textit{far} longer run times: we had to introduce a 1-second-per-step wall-clock timeout to keep training tractable.
+    \item TreeMLP outperforms a vanilla GCN and GraphSAGE on the small dataset (Figure~\ref{gnn-comparison}); the tree-aware aggregation appears necessary, not just helpful.
+    \item Adding curiosity bonuses (ICM, RND, NGU, RIDE, RE3, E3B) on top of TreeMLP \emph{degrades} performance. This contrasts with earlier work~\cite{dabelow2024symbolic}, where curiosity \emph{improved} a vanilla MLP policy. We hypothesize the TreeMLP's structural inductive bias already supplies the exploration signal that curiosity provides for the MLP, so the two are redundant or actively conflicting.
 \end{itemize}
 
 \begin{figure}[t]
   \centering
   \includegraphics[width=\linewidth]{gnn-comparison.png}
-    \caption{TreeMLP outperforms GNN, and GraphSage on the small datasets. Mean of three random seeds with shading to min and max.}
+    \caption{TreeMLP outperforms GCN and GraphSAGE on the small datasets. Mean of three random seeds with shading to min/max.}
   \label{gnn-comparison}
 \end{figure}
 
