@@ -71,6 +71,8 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--run_dir", required=True, help="dir containing model.zip")
     p.add_argument("--gen", type=int, default=5)
+    p.add_argument("--dataset_path", type=str, default=None,
+                   help="Override gen-based lookup; load train/test_eqns from this dir.")
     p.add_argument("--main_eqn", type=str, default="a*x**2 + b*x + c")
     p.add_argument("--term_bank", type=str, default="a,b,c,d,e,2,3,4")
     p.add_argument("--max_depth", type=int, default=3)
@@ -100,6 +102,7 @@ def main():
         multi_eqn=True,
         use_curriculum=False,
         gen=args.gen,
+        dataset_path=args.dataset_path,
     )
 
     model_path = Path(args.run_dir) / "model.zip"

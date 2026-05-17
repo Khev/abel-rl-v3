@@ -339,6 +339,7 @@ def make_env(
     use_curriculum: bool = False,
     use_action_mask: bool = False,
     use_success_replay: bool = False,
+    use_cov: bool = False,
 ):
     #state_rep = 'graph_integer_1d' if 'tree' in agent else 'integer_1d'
     use_graph = any(tok in agent.split('-') for tok in ('tree','gnn','sage'))
@@ -355,7 +356,8 @@ def make_env(
                 state_rep=state_rep,
                 sparse_rewards=sparse_rewards,
                 use_curriculum=use_curriculum,
-                use_success_replay=use_success_replay
+                use_success_replay=use_success_replay,
+                use_cov=use_cov,
             )
         else:
             EnvCls = multiEqn
@@ -364,7 +366,8 @@ def make_env(
                 use_relabel_constants=use_relabel_constants,
                 state_rep=state_rep,
                 sparse_rewards=sparse_rewards,
-                use_curriculum=use_curriculum
+                use_curriculum=use_curriculum,
+                use_cov=use_cov,
             )
     else:
         raise ValueError(f"Unknown env_name: {env_name}")
@@ -389,6 +392,7 @@ def make_train_vec_env(
     use_curriculum: bool,
     use_action_mask: bool,
     use_success_replay: bool,
+    use_cov: bool = False,
 ):
     """Create a vectorized environment for training."""
     vec_cls = SubprocVecEnv if n_envs > 1 else DummyVecEnv
@@ -400,7 +404,8 @@ def make_train_vec_env(
             use_relabel_constants=use_relabel_constants,
             use_curriculum=use_curriculum,
             use_action_mask=use_action_mask,
-            use_success_replay=use_success_replay
+            use_success_replay=use_success_replay,
+            use_cov=use_cov,
         ),
         n_envs=n_envs,
         seed=seed,
@@ -906,7 +911,8 @@ def run_trial(
     sr_batch_size: int = 256,
     sr_iters_per_rollout: int = 10,
     sr_capacity: int = 20000,
-    ent_coef = 0.01
+    ent_coef = 0.01,
+    use_cov: bool = False,
 ):
     train_env = make_train_vec_env(
         n_envs=n_envs,
@@ -919,7 +925,8 @@ def run_trial(
         use_relabel_constants=use_relabel_constants,
         use_curriculum=use_curriculum,
         use_action_mask=action_space == 'dynamic',
-        use_success_replay=use_success_replay
+        use_success_replay=use_success_replay,
+        use_cov=use_cov,
     )
     eval_env  = make_env(
         env_name, agent, gen, seed=seed + 777,
@@ -928,7 +935,8 @@ def run_trial(
         use_relabel_constants=use_relabel_constants,
         use_curriculum=use_curriculum,
         use_action_mask=action_space == 'dynamic',
-        use_success_replay=use_success_replay
+        use_success_replay=use_success_replay,
+        use_cov=use_cov,
     )
     model = make_agent(agent, train_env, hidden_dim, ent_coef=ent_coef,  seed=seed, load_path=load_model_path, tree_kwargs=tree_kwargs, action_space=action_space)
     tag = f"seed{seed}"
@@ -1015,7 +1023,14 @@ def run_trial(
     return metrics, run_dir
 
 def run_trial_wrapper(args):
-    return run_trial(*args)
+    import traceback
+    try:
+        return run_trial(*args)
+    except Exception:
+        # Print the full traceback from inside the worker so the parent
+        # process actually sees where it died.
+        print("\n[worker traceback]\n" + traceback.format_exc(), flush=True)
+        raise
 
 def run_parallel(jobs, n_workers=4, timeout_per_job=None):
     """Submit all jobs; stream results in completion order."""
@@ -1032,7 +1047,9 @@ def run_parallel(jobs, n_workers=4, timeout_per_job=None):
                 timed_print(f"✓ [{done}/{total}] {metrics['agent']} seed={metrics['seed']} | coverage_final={metrics['coverage_final_rate']:.2f} | test_(greedy,beam,@10)=({metrics['final_test_acc']:.2f}, {metrics['final_test_beam']:.2f}, {metrics['final_test_at10']:.2f})")
             except Exception as e:
                 done += 1
+                import traceback
                 timed_print(f"✗ [{done}/{total}] Job crashed or timed out: {e}")
+                timed_print(traceback.format_exc())
     return rows, run_dirs
 
 # ==========================
@@ -1143,7 +1160,8 @@ if __name__ == "__main__":
                 curiosity_local, hidden_dim, load_model_path,
                 args.sparse_rewards, args.use_relabel_constants, args.use_curriculum, tree_kwargs,
                 n_envs, args.action_space, args.use_success_replay, args.sr_mix_ratio,
-                args.sr_batch_size, args.sr_iters_per_rollout, args.sr_capacity, args.ent_coef
+                args.sr_batch_size, args.sr_iters_per_rollout, args.sr_capacity, args.ent_coef,
+                args.use_cov,
             ))
 
     rows, run_dirs = run_parallel(jobs, n_workers=n_workers, timeout_per_job=TRIAL_WALLCLOCK_LIMIT)
