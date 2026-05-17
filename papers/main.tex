@@ -205,23 +205,24 @@ We give more details on TreeMLP in the Appendix. We also show this TreeMLP outpe
 \textbf{Relabel constants.} To improve parameter sharing across structurally identical equations that differ only by symbol names, we introduce a \emph{relabel-constants} action.
 When invoked, it applies a consistent partial renaming (e.g., $\{d\!\mapsto\!a,\, e\!\mapsto\!b,\, \dots\}$) to the current main equation and the working state, mapping arbitrary coefficients onto a compact canonical alphabet $\{a,b,c\}$. The environment stores the induced substitution map on a stack (\texttt{map\_constants\_history}) and uses the mapped equation for all subsequent steps. Upon solving, we \emph{unwind} the stack in reverse, substituting back the original symbols so the final answer is expressed in the user’s variables. This reduces input vocabulary entropy, prevents spurious overfitting to symbol IDs, and makes action terms like ``subtract $b$'' reusable across many instances.
 
-\textbf{Curiosity based rewards}. In a previous work, we showed curiosity based rewards enhanced learning \cite{} using a regular MLP was used. Interesting, we found curiosity \textit{worsened} learning with the TreeMLP (Figure~\ref{}), so we do \textit{not} use them here.
+\textbf{Curiosity based rewards}. In previous work~\cite{dabelow2024symbolic}, curiosity-based exploration bonuses (e.g.\ ICM, RND, NGU) were shown to enhance learning on a regular MLP policy. Interestingly, we found curiosity \textit{worsened} learning with the TreeMLP (Appendix), so we do \textit{not} use it in our headline results.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \section{Results: Closed equations}
 \begin{table}[t!]
 \centering
 \footnotesize
-\caption{Greedy test accuracy for each agent across dataset.}
+\caption{Greedy test accuracy for each agent across dataset. Single-seed results except where noted; ConPoLe / ConPoLe-local numbers from \cite{poesia2021contrastive}. ``--'' denotes a cell awaiting a multi-seed re-run.}
 \begin{tabular}{l c c c}
 \toprule
 Algorithm & small & large & poesia \\
 \midrule
-ConPoLe-local     & n/a  & n/a  & 0.765  \\
-ConPoLe          &  &  & 0.925  \\
-ppo          &  &  & ..  \\
-ppo-tree     &  &  & 0.815  \\
-ppo-tree-rc  &  &  & 0.96  \\
+ConPoLe-local    & n/a   & n/a   & 0.765 \\
+ConPoLe          & --    & --    & 0.925 \\
+ppo              & 0.04  & 0.02  & --    \\
+ppo-tree         & --    & --    & 0.815 \\
+ppo-tree-rc      & 0.90  & --    & 0.96  \\
+ppo-tree-rc-buf  & 0.80  & 0.44  & --    \\
 \bottomrule
 \label{tab:test_greedy}
 \end{tabular}
@@ -231,13 +232,13 @@ ppo-tree-rc  &  &  & 0.96  \\
 
 \textit{Datasets}. We tasked the agent with solving a random equation during each episode. We generate train/test sets by starting with $x$ and applying actions recursively. Recall actions are $(operation, term)$ pairs. The operations are as before, but we restrict terms to $(a, b, c)$ (we excluded $d, e$ since we wanted to favor long, rather than wide equations). Applying a single action generated equations like $ax, \log(x), x+b$, applying 2 actions equations like $ax+b, \log(x)+d, (x+b)/c$ and so on. We threw out any equations that SymPy couldn't solve, and considered multi-root equations solved when just one root was found (e.g. $\sin(x) = 0$ is solved if the agent found $x=0$ rather than $x = 2 n \pi$). We created a small dataset which included all equations of $depth<4$ (size 3874) and sub-sampled to a $10^3/10^2$ train/test split, and a large dataset of all equations of $depth<5$ (size 15625) sub-sampled to a $10^4/10^3$ train/test split. Finally, we also use the CommonCore datasets used in previous works.
 
-\textit{Results}. Figure~\ref{learning_curves_closed} shows the learning curve for each algorithm on all three datasets. We plot three performance metrics: (i) coverage, the fraction of train equation solved at least once, (ii) test accuracy following the greedy policy, (iii) and test accuracy following beam search of XXX.  The top row shows the CommonCore datasets (with coverage excluded since the train set is random and unbounded). The dashed black lines show the results for ConPoLe-local and ConPoLe from \cite{poesia2021contrastive}; these are the SOTA for symbolic equation solving. Notice our vanilla ppo-tree beats the ConPole-local, while our inductive biases ppo-tree-rc-buf beats the ConPole. Table~\ref{tab:test_greedy} reports the exact numbers. 
+\textit{Results}. Figure~\ref{learning_curves_closed} shows the learning curve for each algorithm on all three datasets. We plot three performance metrics: (i) coverage, the fraction of train equations solved at least once, (ii) test accuracy following the greedy policy, (iii) and test accuracy following beam search of width 5.  The top row shows the CommonCore datasets (with coverage excluded since the train set is random and unbounded). The dashed black lines show the results for ConPoLe-local and ConPoLe from \cite{poesia2021contrastive}; these are the SOTA for symbolic equation solving. Notice our vanilla ppo-tree beats ConPoLe-local, while our inductive biases (ppo-tree-rc) beats ConPoLe. Table~\ref{tab:test_greedy} reports the exact numbers. 
 
 The bottom two rows show the results for our the small and large datasets. For the small datasets, all four methods achieve perfect coverage, but only ppo-tree-rc and ppo-tree-rc-buf gives the highest $test_{greedy}$ and $test_{beam}$. For the large dataset, only ppo-tree-rc-buf and ppo-tree-buff have large coverage, and decent test accuracy $test_{beam} \approx 0.5$. By comparison, notice that $test_{greedy}, test_{beam} \approx 0, 0$ for ppo-tree and ppo-tree-rc. 
 
 The takeaway is that our inductive biases help in each case, and are comparable to the SOTA. 
 
-\textit{Analysis}. How does the agent learn to solve the equation? We show two solution traces below. Notice the policy is not always optimal. In X, they multiply by -1 twice. 
+\textit{Analysis}. How does the agent learn to solve the equation? We show two solution traces below. Notice the policy is not always optimal: the second example takes a 3-step detour (steps 5--7: expand, collect, truediv) where a single multiply-by-$-1$ would have sufficed, as in the first example's step 5. 
 \begin{enumerate}
 \item Equation: $c x + d + e(a x + b) = 0$
 \begin{verbatim}
@@ -261,13 +262,10 @@ Solved: x = (b + de)/(-a - c*e)
 \end{verbatim}
 \end{enumerate}
 
-Figure~\ref{} shows the learned represenatations. Comments. 
-
-\begin{itemize}
-    \item Representation learning: show some embedding.
-    \item Failure cases.
-    \item Comment: this is done by X.
-\end{itemize}
+% TODO (see markdowns/tasks.md, Phase 0):
+%   - Add a representation-learning figure (e.g., t-SNE of node embeddings).
+%   - Failure-mode analysis: cluster failures by equation type, give traces.
+%   - "This is done by X" placeholder — figure out original intent.
 
 
 
