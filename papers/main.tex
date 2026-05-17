@@ -271,20 +271,18 @@ Solved: x = (b + de)/(-a - c*e)
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \section{Results: Open equations}
-Now we consider the harder class of \emph{open equations}. We train a separate change–of–variables policy $\pi_{\text{cov}}$ which, given an input equation, proposes a substitution $x \mapsto \phi(x)$ that simplifies the instance into a canonical, easier-to-solve form. We consider five basic templates
+Now we consider the harder class of \emph{open equations}. We train a separate change–of–variables policy $\pi_{\text{cov}}$ which, given an input equation, proposes a substitution $x \mapsto \phi(x)$ that simplifies the instance into a canonical, easier-to-solve form. We consider four basic templates
 \begin{align}
-    & a x^2 + b x + c = 0, x \rightarrow x - b/2a \\
-    &  a x^3 + b x^2 + c x + d = 0, x \rightarrow x - b/3a \\
-    & a x^4 + b x^3 + c x^2 + d x + e = 0, x \rightarrow x - b/4a \\
-    & a e^{k x} + b e^{-k x} + c = 0, x \rightarrow \frac{1}{k}\log x
+    & a x^2 + b x + c = 0, & x &\to x - b/(2a) \\
+    & a x^3 + b x^2 + c x + d = 0, & x &\to x - b/(3a) \\
+    & a x^4 + b x^3 + c x^2 + d x + e = 0, & x &\to x - b/(4a) \\
+    & a e^{k x} + b e^{-k x} + c = 0, & x &\to \tfrac{1}{k}\log x
 \end{align}
-The rhs of each shows the solution cov. Rather that use GAN or VAE, we decided to frame $\pi_{cov}$ as an RL problem. 
+The rhs of each shows the solving CoV. Rather than use a generative model (GAN/VAE) to propose $\phi$, we frame $\pi_{\text{cov}}$ as an RL problem.
 
-Our MDP is as follows:
+\textit{MDP.} \textbf{States} are the encoded main equation together with the current step depth $d$ and an action history (last $H$ action indices). The encoded equation does not change during an episode; only $d$ and the history evolve as the agent builds $\phi$. \textbf{Actions} are pairs $(\text{op}, \tau)$ with $\text{op}\in\{+, -, \times, \div\}$ and $\tau$ drawn from a small term bank $\{a,b,c,d,e,2,3,4\}$, plus a special STOP action; the first action fixes a \emph{base op}, and subsequent actions build an inner substitution $u$ compositionally. \textbf{Transitions} are deterministic: at termination (STOP or $d = d_{\max}$), $\phi(x) := \text{base\_op}(x, u)$, and the env substitutes $x \mapsto \phi(x)$ in the main equation. \textbf{Reward} is the complexity-delta $C(\text{main}) - C(\text{main after } \phi)$ with a small per-step penalty; large positive bonus when $\phi$ reduces complexity (i.e., depresses the equation to a closed-equation-solvable form).
 
-
-
-We train a CoV agent using PPO with TreeMLP. Figure~\ref{cov_results} shows the results. The agent learns to solve the open equations, achieving high accuracy on both greedy and beam search evaluation.
+We train a CoV agent using PPO with TreeMLP. Figure~\ref{cov_results} shows the results.
 
 \begin{figure}[h]
     \centering
@@ -293,20 +291,17 @@ We train a CoV agent using PPO with TreeMLP. Figure~\ref{cov_results} shows the 
     \label{cov_results}
 \end{figure}
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\section{Notes}
-
-\begin{itemize}
-    \item Abel. Start with 1 root, 2 root + operations. Verify all equaiton are (i) solvable and (ii) solvable within the max steps... I think equations like $a^18 x^3$ arise, from applying $(mul,a)$ and $pow$ multiple times.
-    \item Poesia
-    \item Generate train on the fly
-    \item emtrics for each equation type.
-    \item Curisoity + tree
-    \item Square root equation that mma couldnt solve
-    \item Fixed unsupervised. Move to calculus.
-    \item Action embeddings?
-    \item The smith and the wizard.
-\end{itemize}
+% TODO scratchpad of ideas (commented out so it doesn't render):
+%   - Abel: verify equations are (i) solvable, (ii) solvable within max_steps.
+%     E.g., a^18 x^3 can arise from repeated (mul,a) and pow.
+%   - Poesia.
+%   - Generate train set on the fly.
+%   - Per-equation-type metrics.
+%   - Curiosity + tree (negative result).
+%   - Square root equation that Mathematica couldn't solve (anecdote).
+%   - Fixed unsupervised. Move to calculus.
+%   - Action embeddings?
+%   - The smith and the wizard.
 
 % Acknowledgements should only appear in the accepted version.
 \section*{Acknowledgements}
