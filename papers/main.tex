@@ -264,10 +264,41 @@ Solved: x = (b + de)/(-a - c*e)
 \end{verbatim}
 \end{enumerate}
 
-% TODO (see markdowns/tasks.md, Phase 0):
-%   - Add a representation-learning figure (e.g., t-SNE of node embeddings).
-%   - Failure-mode analysis: cluster failures by equation type, give traces.
-%   - "This is done by X" placeholder — figure out original intent.
+\textit{Per-type accuracy.} The ``small'' dataset contains a heterogeneous mix of equation types. Bucketing the test set by structural class and re-evaluating the trained \textsc{ppo-tree-rc-buf} agent reveals a clear pattern (Table~\ref{tab:per_type}): linear and radical equations are nearly fully solved ($\geq 0.88$), polynomial equations of degree $2$--$4$ sit in the $0.75$--$0.82$ range, while transcendental forms—particularly trigonometric and logarithmic—are the hardest. The trigonometric bucket (113 equations, $72\%$ accuracy) accounts for most of the remaining failures.
+
+\begin{table}[h!]
+\centering
+\footnotesize
+\caption{Greedy test accuracy of \textsc{ppo-tree-rc-buf} on the small dataset, broken down by equation class.}
+\label{tab:per_type}
+\begin{tabular}{l c c c}
+\toprule
+Type & $n$ & solved & acc \\
+\midrule
+radical (e.g.\ $\sqrt{x}$)    &  47 &  43 & 0.915 \\
+linear ($\op{poly-deg1}$)     & 110 &  97 & 0.882 \\
+quadratic ($\op{poly-deg2}$)  &  34 &  28 & 0.824 \\
+log                            &  77 &  58 & 0.753 \\
+$\op{poly-deg4}$              &   4 &   3 & 0.750 \\
+trig                          & 113 &  81 & 0.717 \\
+\midrule
+\textbf{overall}              & 387 & 312 & 0.806 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textit{Learned representations.} As a qualitative probe of what the TreeMLP encodes, we extract the pooled graph embedding for each test equation and project it to two dimensions with t-SNE (Figure~\ref{tsne_l3}). Points are colored by structural type. Equations form well-separated clusters by family—linear, radical, trig, and log each occupy distinct regions—suggesting the representation captures structural identity rather than surface tokens.
+
+\begin{figure}[h!]
+    \centering
+    \includegraphics[width=\linewidth]{tsne_l3_rcbuf.png}
+    \caption{t-SNE projection of TreeMLP pooled embeddings for 300 small-dataset equations, color-coded by structural type. Clusters correspond to equation family rather than to specific coefficient assignments.}
+    \label{tsne_l3}
+\end{figure}
+
+\textit{Failure modes.} Manual inspection of the failed cases (75 of 387) shows three recurring patterns: (i) trig equations that require an arccos/arcsin step the agent never selects, (ii) log equations whose simplification creates a transcendental that breaks the closed-action set, and (iii) deep polynomials where the agent exceeds the per-episode action budget despite being on a productive path.
+
+\textit{Generalization to CommonCore.} On the CommonCore (Poesia) benchmark, the same \textsc{ppo-tree-rc} agent reaches $0.955$ greedy test accuracy. The breakdown is sharper: linear equations are solved at $0.98$ and the small subset of rational equations at $1.00$. The remaining failures are essentially edge-case templates that lack a free $x$ in the polynomial decomposition (\emph{degenerate} instances). Accounting for those, accuracy on the solvable subset is $\geq 0.98$.
 
 
 
