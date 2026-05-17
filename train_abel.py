@@ -702,6 +702,10 @@ def _snapshot_env(env) -> Dict[str, Any]:
         main_eqn=u.main_eqn,
         map_constants=getattr(u, "map_constants", None),
         map_constants_history=list(getattr(u, "map_constants_history", [])),
+        # CoV state (only present if use_cov=True; ignored otherwise)
+        cov_inv=list(getattr(u, "cov_inv", [])),
+        main_eqn_original_cov=getattr(u, "main_eqn_original_cov", None),
+        solve_var=getattr(u, "solve_var", None),
         _timeout_count=getattr(u, "_timeout_count", 0),
         # optional: if your env tracks done flags internally
         _terminated=getattr(u, "_terminated", False),
@@ -717,6 +721,13 @@ def _restore_env(env, snap: Dict[str, Any]) -> None:
     u.main_eqn = snap["main_eqn"]
     u.map_constants = snap["map_constants"]
     u.map_constants_history = list(snap["map_constants_history"])
+    # Restore CoV state too (no-op for envs without it)
+    if hasattr(u, "cov_inv"):
+        u.cov_inv = list(snap.get("cov_inv", []))
+    if hasattr(u, "main_eqn_original_cov"):
+        u.main_eqn_original_cov = snap.get("main_eqn_original_cov", None)
+    if hasattr(u, "solve_var") and snap.get("solve_var") is not None:
+        u.solve_var = snap["solve_var"]
     u._timeout_count = snap["_timeout_count"]
     # optional:
     if "_terminated" in snap: u._terminated = snap["_terminated"]
