@@ -22,11 +22,14 @@ torch.set_num_threads(int(os.environ["OMP_NUM_THREADS"]))
 # --- Envs ---
 from envs.env_single_eqn_fixed import singleEqn
 from envs.env_multi_eqn_fixed import multiEqn
+from envs.env_multi_eqn import multiEqn as multiEqnDynamic
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
 from stable_baselines3.common.env_util import make_vec_env
 
 # --- SB3 ---
 from stable_baselines3 import PPO
+from sb3_contrib import MaskablePPO
+from sb3_contrib.common.wrappers import ActionMasker
 from stable_baselines3.common.callbacks import BaseCallback, ProgressBarCallback
 from stable_baselines3.common.base_class import BaseAlgorithm
 
@@ -37,7 +40,6 @@ from rllte.xplore.reward import E3B, ICM, NGU, RE3, RIDE, RND
 from utils.utils_env import TreeMLPExtractor
 from utils.utils_general import print_parameters
 from utils.utils_train import timed_print
-
 
 # ==========================
 # Global knobs
@@ -179,38 +181,174 @@ class IntrinsicReward(BaseCallback):
         except Exception as e:
             print(f"[Curiosity] rollout_end failed: {e}")
 
+# ==========================
+# Success Replay (optional) — DEDUP VERSION
+# ==========================
+import random
+from collections import deque
+
+class SuccessBuffer:
+    def __init__(self, capacity=20000):
+        self.obs = deque(maxlen=capacity)
+        self.act = deque(maxlen=capacity)
+
+    def add_episode(self, traj_obs, traj_act):
+        for o, a in zip(traj_obs, traj_act):
+            self.obs.append(o)
+            self.act.append(int(a))
+
+    def sample(self, batch_size):
+        n = len(self.obs)
+        if n == 0:
+            return None, None
+        idx = random.sample(range(n), k=min(batch_size, n))
+        obs_b = [self.obs[i] for i in idx]
+        act_b = np.array([self.act[i] for i in idx], dtype=np.int64)
+        return obs_b, act_b
+
+    def __len__(self):
+        return len(self.obs)
+
+
+class SuccessReplayCallback(BaseCallback):
+    """
+    Harvests solved trajectories and runs small behavior-cloning (BC) updates
+    between PPO rollouts. Adds to buffer only UNIQUE traces per
+    (equation, action sequence).
+    """
+    def __init__(
+        self,
+        mix_ratio=0.5,
+        batch_size=256,
+        iters_per_rollout=10,
+        capacity=20000,
+        verbose=0
+    ):
+        super().__init__(verbose)
+        self.mix_ratio = float(mix_ratio)
+        self.batch_size = int(batch_size)
+        self.iters_per_rollout = int(iters_per_rollout)
+        self.buf = SuccessBuffer(capacity=capacity)
+
+        # Dedup sets
+        self.seen_eqns = set()     # for coverage prints
+        self.seen_traces = set()   # keys: (str(main_eqn), tuple(action_ids))
+
+    def _on_step(self) -> bool:
+        for info in self.locals.get("infos", []):
+            if not isinstance(info, dict):
+                continue
+            if info.get("is_solved"):
+                main_eqn = info.get("main_eqn")
+
+                # Print coverage only the first time we see an equation solved
+                if main_eqn not in self.seen_eqns:
+                    self.seen_eqns.add(main_eqn)
+                    cov = info.get("coverage", None)
+                    # if cov is not None:
+                    #     print(f't={self.num_timesteps} | Solved {main_eqn} | Coverage = {cov:.3f}')
+                    # else:
+                    #     print(f't={self.num_timesteps} | Solved {main_eqn}')
+
+                # Add trajectory only if (eqn, action-seq) is new
+                traj_obs = info.get("traj_obs", None)
+                traj_act = info.get("traj_act", None)
+                if traj_obs is not None and traj_act is not None and len(traj_obs) == len(traj_act):
+                    # Normalize actions to a tuple of ints for hashing
+                    act_tuple = tuple(int(a) for a in np.asarray(traj_act).tolist())
+                    key = (str(main_eqn), act_tuple)
+                    if key not in self.seen_traces:
+                        self.seen_traces.add(key)
+                        self.buf.add_episode(traj_obs, traj_act)
+        return True
+
+    @torch.no_grad()
+    def _obs_list_to_tensor(self, obs_list):
+        obs_tensor, _ = self.model.policy.obs_to_tensor(obs_list)
+        return obs_tensor
+
+    def _supervised_step(self, obs_batch, act_batch):
+        device = self.model.policy.device
+        obs_t = self._obs_list_to_tensor(obs_batch)
+        act_t = torch.as_tensor(act_batch, device=device)
+
+        self.model.policy.optimizer.zero_grad(set_to_none=True)
+        dist = self.model.policy.get_distribution(obs_t)
+        logp = dist.log_prob(act_t)
+        loss_bc = -logp.mean()
+        ent = dist.entropy().mean()
+        loss = loss_bc - 1e-3 * ent
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.model.policy.parameters(), 0.5)
+        self.model.policy.optimizer.step()
+        return float(loss_bc.item()), float(ent.item())
+
+    def _on_rollout_end(self) -> None:
+        if len(self.buf) == 0:
+            return
+        n_envs = getattr(self.training_env, "num_envs", 1)
+        n_steps = getattr(self.model, "n_steps", 2048)
+        target_minibatches = max(1, int(self.mix_ratio * (n_envs * n_steps) / self.batch_size))
+        total_iters = max(self.iters_per_rollout, target_minibatches)
+
+        bc_losses, ents = [], []
+        for _ in range(total_iters):
+            obs_b, act_b = self.buf.sample(self.batch_size)
+            if obs_b is None:
+                break
+            lbc, ent = self._supervised_step(obs_b, act_b)
+            bc_losses.append(lbc); ents.append(ent)
+
+        if self.verbose and bc_losses:
+            print(f"[SuccessReplay] size={len(self.buf)} bc_steps={len(bc_losses)} "
+                  f"bc_loss={np.mean(bc_losses):.4f} ent={np.mean(ents):.3f}")
+
 
 # ==========================
 # Env / agent factories
 # ==========================
+
+def _get_action_mask(env):
+    # Your env already exposes this:
+    return env.get_valid_action_mask()
+
+
 def make_env(
     env_name: str,
     agent: str,
     gen: str,
     seed: int = 0,
     *,
+    action_space: str = 'fixed',          # <— NEW
     sparse_rewards: bool = False,
     use_relabel_constants: bool = False,
     use_curriculum: bool = False,
 ):
     state_rep = 'graph_integer_1d' if 'tree' in agent else 'integer_1d'
+
     if env_name == 'single_eqn':
         env = singleEqn(main_eqn='a*x+b', state_rep=state_rep)
+
     elif env_name == 'multi_eqn':
-        env = multiEqn(
+        # pick env class based on action_space
+        EnvCls = multiEqnDynamic if action_space == 'dynamic' else multiEqn
+        env = EnvCls(
             gen=gen,
             use_relabel_constants=use_relabel_constants,
             state_rep=state_rep,
             sparse_rewards=sparse_rewards,
             use_curriculum=use_curriculum
         )
+
     else:
         raise ValueError(f"Unknown env_name: {env_name}")
+
     try:
         env.reset(seed=seed)
     except TypeError:
         env.seed(seed)  # older gym API
     return env
+
 
 
 def make_train_vec_env(
@@ -220,22 +358,26 @@ def make_train_vec_env(
     gen: str,
     seed: int,
     *,
+    action_space: str,                    # <— NEW
     sparse_rewards: bool,
     use_relabel_constants: bool,
     use_curriculum: bool,
 ):
     """Create a vectorized environment for training."""
     vec_cls = SubprocVecEnv if n_envs > 1 else DummyVecEnv
-    # We pass a callable that builds a fresh env; make_vec_env handles seeding per-rank.
     return make_vec_env(
-        lambda: make_env(env_name, agent, gen, seed=seed,
-                         sparse_rewards=sparse_rewards,
-                         use_relabel_constants=use_relabel_constants,
-                         use_curriculum=use_curriculum),
+        lambda: make_env(
+            env_name, agent, gen, seed=seed,
+            action_space=action_space,                # <— pass through
+            sparse_rewards=sparse_rewards,
+            use_relabel_constants=use_relabel_constants,
+            use_curriculum=use_curriculum
+        ),
         n_envs=n_envs,
         seed=seed,
         vec_env_cls=vec_cls
     )
+
 
 
 def _infer_tree_limits_from_space(obs_space: spaces.Space) -> Tuple[int, int]:
@@ -590,6 +732,12 @@ def run_trial(
     use_curriculum: bool,
     tree_kwargs: Optional[Dict[str, Any]],
     n_envs: int,
+    action_space: str,     
+    use_success_replay: bool = False,
+    sr_mix_ratio: float = 0.5,
+    sr_batch_size: int = 256,
+    sr_iters_per_rollout: int = 10,
+    sr_capacity: int = 20000,
 ):
     # Build envs: vectorized for training, single for eval
     train_env = make_train_vec_env(
@@ -598,14 +746,19 @@ def run_trial(
         agent=agent,
         gen=gen,
         seed=seed,
+        action_space=action_space,          # <— pass in
         sparse_rewards=sparse_rewards,
         use_relabel_constants=use_relabel_constants,
         use_curriculum=use_curriculum,
     )
-    eval_env  = make_env(env_name, agent, gen, seed=seed + 777,
-                         sparse_rewards=sparse_rewards,
-                         use_relabel_constants=use_relabel_constants,
-                         use_curriculum=use_curriculum)
+
+    eval_env  = make_env(
+        env_name, agent, gen, seed=seed + 777,
+        action_space=action_space,          # <— pass in
+        sparse_rewards=sparse_rewards,
+        use_relabel_constants=use_relabel_constants,
+        use_curriculum=use_curriculum
+    )
 
     # Build/load model
     model = make_agent(agent, train_env, hidden_dim, seed=seed, load_path=load_model_path, tree_kwargs=tree_kwargs)
@@ -626,19 +779,35 @@ def run_trial(
     )
     cb_list: List[BaseCallback] = [cb_main, ProgressBarCallback()]
 
+    # Success replay (optional)
+    if use_success_replay:
+        cb_list.append(
+            SuccessReplayCallback(
+                mix_ratio=sr_mix_ratio,
+                batch_size=sr_batch_size,
+                iters_per_rollout=sr_iters_per_rollout,
+                capacity=sr_capacity,
+                verbose=0
+            )
+        )
+
     # Intrinsic reward (optional) — use a 1-env VecEnv; wrap NodeFeatureView for tree.
     if curiosity is not None:
         wrapper_cls = NodeFeatureView if 'tree' in agent else None
         curiosity_vec = make_vec_env(
-            lambda: make_env(env_name, agent, gen, seed=seed,
-                             sparse_rewards=sparse_rewards,
-                             use_relabel_constants=use_relabel_constants,
-                             use_curriculum=use_curriculum),
+            lambda: make_env(
+                env_name, agent, gen, seed=seed,
+                action_space=args_action_space,           # <— pass in
+                sparse_rewards=sparse_rewards,
+                use_relabel_constants=use_relabel_constants,
+                use_curriculum=use_curriculum
+            ),
             n_envs=1,
             seed=seed,
             vec_env_cls=DummyVecEnv,
             wrapper_class=wrapper_cls
         )
+
         irs = get_intrinsic_reward(curiosity, curiosity_vec)
         if irs:
             cb_list.append(IntrinsicReward(irs))
@@ -735,17 +904,22 @@ if __name__ == "__main__":
     # ---- Env args ----
     env_group = parser.add_argument_group("Environment")
     env_group.add_argument('--env_name', type=str, default='multi_eqn', help='Environment name')
-    env_group.add_argument('--gen', type=str, default='abel_level4', help='Equation generator')
+    env_group.add_argument('--action_space', type=str, default='fixed', help='Environment name')
+    env_group.add_argument('--gen', type=str, default='abel_level2', help='Equation generator')
     env_group.add_argument('--sparse_rewards', action='store_true', help='Use sparse rewards instead of shaping')
     env_group.add_argument('--use_curriculum', action='store_true', help='Use inverse sampling curriculum')
     env_group.add_argument('--use_relabel_constants', action='store_true', help='Enable relabel-constants macroaction')
+    env_group.add_argument('--use_success_replay', action='store_true', help='Enable success replay BC updates')
+    env_group.add_argument('--use_action_mask', action='store_true')
 
     # ---- Training args ----
     train_group = parser.add_argument_group("Training")
-    train_group.add_argument('--Ntrain', type=int, default=10**7, help='Total training timesteps')
-    train_group.add_argument('--n_trials', type=int, default=1, help='Number of trials per agent')
-    train_group.add_argument('--base_seed', type=int, default=0, help='Base seed')
+    train_group.add_argument('--Ntrain', type=int, default=10**3, help='Total training timesteps')
+    train_group.add_argument('--n_trials', type=int, default=3, help='Number of trials per agent')
+    train_group.add_argument('--n_workers', type=int, default=3, help='Number of parallel workers')
+    train_group.add_argument('--base_seed', type=int, default=1, help='Base seed')
     train_group.add_argument('--n_envs', type=int, default=1, help='Number of parallel envs for training (VecEnv)')
+
 
     # ---- Eval/Logging args ----
     eval_group = parser.add_argument_group("Eval / Logging")
@@ -770,20 +944,26 @@ if __name__ == "__main__":
     tree_group.add_argument('--tree_pi_sizes', type=int, nargs='+', default=[128], help='PI MLP head sizes')
     tree_group.add_argument('--tree_vf_sizes', type=int, nargs='+', default=[128], help='VF MLP head sizes')
 
-    # ---- System / Runtime args ----
-    sys_group = parser.add_argument_group("System / Runtime")
-    sys_group.add_argument('--n_workers', type=int, default=1, help='Number of parallel workers')
+    # ---- Success Replay args (defaults OFF) ----
+    replay_group = parser.add_argument_group("Success Replay (optional)")
+    replay_group.add_argument('--sr_mix_ratio', type=float, default=0.5, help='Fraction of PPO batch worth of BC steps')
+    replay_group.add_argument('--sr_batch_size', type=int, default=256, help='BC minibatch size')
+    replay_group.add_argument('--sr_iters_per_rollout', type=int, default=10, help='BC iters per PPO rollout')
+    replay_group.add_argument('--sr_capacity', type=int, default=20000, help='Replay capacity')
+
 
     args = parser.parse_args()
-    args.use_curriculum = True  #overrwrite to force curriculum by default
+    args.use_curriculum = True  # overwrite to force curriculum by default
+    if args.action_space = 'dynamic':
+        args.use_action_mask = True
     print_parameters(vars(args))
 
     # Defaults / convenient overrides
     env_name   = args.env_name
     agents     = args.agents
     Ntrain     = args.Ntrain
-    eval_int   = args.eval_interval if args.eval_interval > 0 else max(1, Ntrain // 20)
-    log_int    = args.log_interval  if args.log_interval  > 0 else max(1, Ntrain // 20)
+    eval_int   = args.eval_interval if args.eval_interval > 0 else max(1, Ntrain // 100)
+    log_int    = args.log_interval  if args.log_interval  > 0 else max(1, Ntrain // 100)
     n_trials   = args.n_trials
     base_seed  = args.base_seed
     n_workers  = args.n_workers
@@ -792,6 +972,14 @@ if __name__ == "__main__":
     n_envs     = args.n_envs
     save_root  = args.save_root or f"data/{gen}_hidden_dim{hidden_dim}_nenvs{args.n_envs}"
     load_model_path = args.load_model_path
+
+    if args.use_success_replay:
+        save_root = f"data/use_buffer/{gen}_hidden_dim{hidden_dim}_nenvs{args.n_envs}"
+    if args.action_space == 'dynamic':
+        save_root = f"data/dynamic_actions/{gen}_hidden_dim{hidden_dim}_nenvs{args.n_envs}"
+
+
+    print(f'save_dir = {save_root}')
 
     # Tree kwargs to pass into agent builder
     tree_kwargs = dict(
@@ -822,8 +1010,12 @@ if __name__ == "__main__":
                 agent, env_name, gen, Ntrain, eval_int, log_int, seed, save_root_agent,
                 curiosity_local, hidden_dim, load_model_path,
                 args.sparse_rewards, args.use_relabel_constants, args.use_curriculum, tree_kwargs,
-                n_envs
+                n_envs,
+                args.action_space,                      # <— NEW in tuple
+                args.use_success_replay, args.sr_mix_ratio, args.sr_batch_size,
+                args.sr_iters_per_rollout, args.sr_capacity
             ))
+
 
     # Run
     rows, run_dirs = run_parallel(jobs, n_workers=n_workers, timeout_per_job=TRIAL_WALLCLOCK_LIMIT)
@@ -866,4 +1058,3 @@ if __name__ == "__main__":
     out_csv = os.path.join(save_root, "summary.csv")
     summary.to_csv(out_csv, index=False)
     timed_print(f"\nSaved summary → {out_csv}")
-

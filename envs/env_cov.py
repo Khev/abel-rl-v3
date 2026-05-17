@@ -160,7 +160,8 @@ class covEnv(gym.Env):
         multi_eqn=True,
         use_curriculum=False,
         gen=3,
-        state_rep='integer_1d'
+        state_rep='integer_1d',
+        dataset_path=None,
     ):
         super().__init__()
         self.x = x
@@ -175,6 +176,7 @@ class covEnv(gym.Env):
         self.use_curriculum = use_curriculum
         self.multi_eqn = multi_eqn
         self.gen = gen
+        self.dataset_path = dataset_path
 
         # actions
         self.ops = ["ADD", "SUB", "MUL", "DIV", "STOP"]
@@ -183,8 +185,12 @@ class covEnv(gym.Env):
         self.action_space = spaces.Discrete(len(self.actions))
 
         # data
-        train_file = f"equation_templates/cov_level{self.gen}/train_eqns.txt"
-        test_file  = f"equation_templates/cov_level{self.gen}/test_eqns.txt"
+        if self.dataset_path:
+            train_file = f"{self.dataset_path}/train_eqns.txt"
+            test_file  = f"{self.dataset_path}/test_eqns.txt"
+        else:
+            train_file = f"equation_templates/cov_level{self.gen}/train_eqns.txt"
+            test_file  = f"equation_templates/cov_level{self.gen}/test_eqns.txt"
         self.train_eqns = load_equations(train_file)
         self.test_eqns  = load_equations(test_file)
         self.solve_counts  = {train_eqn: 0 for train_eqn in self.train_eqns}

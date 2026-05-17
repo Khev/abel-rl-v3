@@ -137,7 +137,7 @@ class multiEqn(Env):
                  use_success_replay=True,
                  use_memory=False,
                  use_curriculum=True,
-                 use_cov=True,
+                 use_cov=False,
                  #pi_cov = pi_cov_quadratic,
                  pi_cov = pi_cov_general,
                  max_cov_apps = 1,

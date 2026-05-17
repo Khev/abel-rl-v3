@@ -1,0 +1,585 @@
+%%%%%%%% ICML 2025 EXAMPLE LATEX SUBMISSION FILE %%%%%%%%%%%%%%%%%
+
+\documentclass{article}
+
+% Recommended, but optional, packages for figures and better typesetting:
+\usepackage{microtype}
+\usepackage{graphicx}
+\usepackage{subfigure}
+\usepackage{booktabs} % for professional tables
+\usepackage{wrapfig}    % wrap figures
+
+% Code listings
+\usepackage{listings}
+\usepackage{xcolor}
+
+\lstdefinestyle{pyicml}{
+  language=Python,
+  basicstyle=\ttfamily\footnotesize,
+  numbers=left,
+  numberstyle=\tiny,
+  stepnumber=1,
+  numbersep=6pt,
+  showstringspaces=false,
+  columns=fullflexible,      % better line breaks in two-column
+  keepspaces=true,
+  breaklines=true,
+  breakatwhitespace=true,
+  tabsize=2,
+  frame=single,
+  framerule=0.2pt,
+  rulecolor=\color{black!20},
+  keywordstyle=\bfseries,
+  commentstyle=\itshape\color{black!55},
+  stringstyle=\color{black},
+}
+
+
+% hyperref makes hyperlinks in the resulting PDF.
+% If your build breaks (sometimes temporarily if a hyperlink spans a page)
+% please comment out the following usepackage line and replace
+% \usepackage{icml2025} with \usepackage[nohyperref]{icml2025} above.
+\usepackage{hyperref}
+\usepackage{algorithm}
+\usepackage[noend]{algpseudocode} % remove [noend] if you want explicit "end" lines
+% nicer inline comments like  \Comment{...}
+\algrenewcommand\algorithmiccomment[1]{\hfill\(\triangleright\)~#1}
+
+
+% Attempt to make hyperref and algorithmic work together better:
+% Use the following line for the initial blind version submitted for review:
+% \usepackage{icml2025}
+
+% If accepted, instead use the following line for the camera-ready submission:
+\usepackage[accepted]{icml2025}
+
+% For theorems and such
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{mathtools}
+\usepackage{amsthm}
+
+% if you use cleveref..
+\usepackage[capitalize,noabbrev]{cleveref}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% THEOREMS
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\theoremstyle{plain}
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{corollary}[theorem]{Corollary}
+\theoremstyle{definition}
+\newtheorem{definition}[theorem]{Definition}
+\newtheorem{assumption}[theorem]{Assumption}
+\theoremstyle{remark}
+\newtheorem{remark}[theorem]{Remark}
+
+% Todonotes is useful during development; simply uncomment the next line
+%    and comment out the line below the next line to turn off comments
+%\usepackage[disable,textsize=tiny]{todonotes}
+\usepackage[textsize=tiny]{todonotes}
+
+
+% The \icmltitle you define below is probably too long as a header.
+% Therefore, a short form for the running title is supplied here:
+\icmltitlerunning{Submission and Formatting Instructions for ICML 2025}
+
+\begin{document}
+
+\twocolumn[
+\icmltitle{Reinforcement learning for symbolic mathematics}
+
+% It is OKAY to include author information, even for blind
+% submissions: the style file will automatically remove it for you
+% unless you've provided the [accepted] option to the icml2025
+% package.
+
+% List of affiliations: The first argument should be a (short)
+% identifier you will use later to specify author affiliations
+% Academic affiliations should list Department, University, City, Region, Country
+% Industry affiliations should list Company, City, Region, Country
+
+% You can specify symbols, otherwise they are numbered in order.
+% Ideally, you should not use this facility. Affiliations will be numbered
+% in order of appearance and this is the preferred way.
+\icmlsetsymbol{equal}{*}
+
+\begin{icmlauthorlist}
+\icmlauthor{Kevin, O'Keeffe}{equal,yyy}
+\end{icmlauthorlist}
+
+\icmlaffiliation{yyy}{Starling Research Institute, Seattle, USA}
+
+\icmlcorrespondingauthor{Kevin, O'Keeffe}{kevin.p.okeeffe@gmail.com}
+
+\icmlkeywords{Symbolic mathematic, Reinforcement learning}
+
+\vskip 0.3in
+]
+
+% this must go after the closing bracket ] following \twocolumn[ ...
+
+% This command actually creates the footnote in the first column
+% listing the affiliations and the copyright notice.
+% The command takes one argument, which is text to display at the start of the footnote.
+% The \icmlEqualContribution command is standard text for equal contribution.
+% Remove it (just {}) if you do not need this facility.
+
+%\printAffiliationsAndNotice{}  % leave blank if no need to mention equal contribution
+\printAffiliationsAndNotice{\icmlEqualContribution} % otherwise use the standard text.
+
+\begin{abstract}
+We explore if RL can be useful for symbolic mathematics. Previous work showed contrastive learning can solve linear equations in one variable. We show model-free PPO \cite{schulman2017proximal} augmented with curiosity-based exploration and graph-based actions can solve nonlinear equations such as those involving radicals, exponentials, and trig functions. Our work suggests curiosity-based exploration may be useful for general symbolic reasoning tasks.
+\end{abstract}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Introduction}
+Reinforcement learning (RL) has been applied to diverse fields \citep{ng2006autonomous, degrave2022magnetic, vinyals2019grandmaster} but has not yet been widely adopted in symbolic mathematics, where agents perform tasks like solving algebraic equations or evaluating integrals analytically. Traditional approaches to symbolic mathematics rely on hand-engineered systems like Mathematica or Maple. An RL-based approach, where agents learn transformations autonomously, could reduce manual curation and find novel solution techniques.
+
+Applying RL to symbolic math is difficult because the state space is combinatorially large, as each equation can branch into numerous sub-expressions. The action space is also large and dynamic: at every step, the agent can apply various algebraic manipulations to different sub-expressions, so the number and type of actions change with the equation's form.
+
+We here show RL agents combined with curiosity-based exploration and an graph-based action space can overcome these challenges. The agents learn to solve a wide range of algebraic equations such as those involving radicals and trig functions. Though perhaps simple from a human perspective, solving such equations using RL is non-trivial and to our knowledge has never before been done. Moreover, they are a key building block for more advanced tasks like solving differential equations.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Problem Formulation}
+Our Markov Decision Process (MDP) formulation is
+
+\textbf{States}: equations like $ax+b =0$ or $cx+d = -x/b$. We vectorize these using preorder traversal over the equations' expression tree (Figure~\ref{trees}) and pad to a maximum length $L=50$ (suitable length for the equation sizes we here consider). Then we map operations and symbols to integers \(\{\text{add}:1, \text{sub}:2, \text{mul}:3, \ldots, x:5, a:6, \ldots\}\). We encode both the lhs and rhs of the equation in this manner and then concatenate. An example embedding is $x+a \rightarrow [add, x, a] \rightarrow [1, 5, 8, PAD, \dots]$
+\begin{figure}
+    \centering
+    \includegraphics[width=\linewidth]{tree.png} % fill the wrap box
+    \caption{Expression trees for \(ax+b\) and \(ax^2+bx+c\).}
+    \label{trees}
+\end{figure}
+
+\textbf{Actions}: represented as $(operation, term)$ pairs, such as $(sub, b)$ or $(div,a)$. Formally,
+\begin{align}
+O &= \{\,\op{add},\ \op{subtract},\ \op{mult},\ \op{divide}\,\} \nonumber \\
+   &= \cup  \{\op{square}, \ \op{sqrt},\ \op{exp},\ \op{log}, \op{sin}, \op{cos}\, \op{asin},\ \op{acos}\,\} \\
+T   &= \SubExpr(\text{lhs}) \cup \SubExpr(\text{rhs}), \\
+A   &= (O \times T) \cup \{(Expand, None),  (\op{collect}, x), (\op{multiply}, -1)\}.
+\end{align}
+Notice the first set of operations take two arguments, the second one argument. For the terms, we choose the list of sub-expressions in the lhs and rhs expression trees. Example of sub-expressions are
+\begin{align}
+& ax+b=0 \Rightarrow \{a, x, ax, b\} & \quad  \\
+& \frac{ax+b}{cx+d}+e=0 \Rightarrow \{a, x, ax, b, c, d, cx, cx+d, ax+b\} 
+\end{align}
+This term set is expressive enough to solve rational equations and all other equation types we consider in this paper. It is also dynamic: the list of sub-expressions is derived from the equation/state and thus has variable length. Looping back to the operations, we also include $(mul,-1)$ and
+\begin{align*}
+    & \text{expand:} \quad cx + d + e(ax + b) \rightarrow aex + be + cx + d = 0 \\
+    & \text{collect $x$:}  \quad  ax + bx \rightarrow (a + b)x \
+    %& \text{multiply by $-1$}  
+\end{align*}
+These allow the agent to perform key algebraic steps (Appendix). Finally, we index the action set \(A\) serially, cap it at size \(|A|=50\) \footnote{We explored other values like $|A| = 40, 70, 100$ and found no changes in performance}, and mask illegal actions (e.g., division by zero, see Appendix). 
+
+\textit{Rewards}. Define the \textit{complexity} $C$ of an equation as the total number of nodes and edges in the expression tree \footnote{we judged number of nodes+edges correlates better with algebraic complexity than number of nodes alone.}. The complexities of the equations in Figure~\ref{trees} are $C(ax+b) = 5 + 4 = 9$ and $C(ax^2 + bx + c) =  10 + 9 = 19$. The reward is then
+\begin{align}
+    R(\text{action}) = C(\text{equation}) - C(\text{equation after action})
+\end{align}
+The intuition here is to encourage the agent to take actions which simplify the equation. 
+
+\textbf{State Transition Function}. We wrote our code in Python and used SymPy to apply operations to the equations. At each step, we keep track of a lhs and rhs of an equation e.g. \(lhs = (ax+b)\) and \(rhs = 0\). We apply actions to both the lhs and rhs. For example, $(sub,b)$ results in \((lhs, rhs) = (ax, -b)\), and then $(div,a)$ results in \((lhs, rhs) = (x, -b/a)\). The terminal condition for the environment is when \(lhs=x\) and the substitution of the $rhs$ into the original equation simplifies to $0$.
+
+\textbf{Limitations}. Importantly, this MDP formulation only works on equations which are `closed,' in the sense that solving them requires manipulating the terms already present in the equation/sub-expression list. By contrast, solving 'open' equations requires adding new, out-of-equation terms or clever substitutions. A classic example is the quadratic equation $a x^2 + b x + c$ which is solved by completing the square -- adding $(b/2a)^2$ to each side. This is 'generative' reasoning, since the term $(b/2a)^2$ is \textit{not} in the term set we have defined. Equations that require these more exotic actions are beyond the scope of the current work (and were also not studied in all previous works \cite{poesia2021contrastive,dabelow2024symbolic}).
+
+
+\subsection{Inductive biases}
+\begin{figure*}[t]
+  \centering
+  \includegraphics[width=\linewidth]{closed-equations.png}
+    \caption{Learning curves for the closed environments. Mean of three random seeds, shading from min to max.}
+  \label{learning_curves_closed}
+\end{figure*}
+
+We use a number of inductive biases improve learning
+
+\textbf{TreeMLP}. We use a custom \textit{TreeMLP} architecture to exploit the expression-tree structure of our equations (nodes are tokens/operators; edges are parent$\to$child). Each node ID is embedded and linearly projected to a hidden size, then we perform $K$ rounds of message passing with a simple sum aggregator over incoming edges (no degree normalization). At round $t$, a node’s representation is updated by applying a two-layer MLP with ReLU to the concatenation of its static embedding and the aggregated message, i.e., $h^{(t+1)}_i = \mathrm{MLP}!\left([\mathrm{emb}i ,|, \sum{j\to i} h^{(t)}_j]\right)$. Padding-aware masks zero out invalid nodes and edges at every stage. After $K$ iterations, we obtain a fixed-size graph feature by pooling (mean or max) over valid node states, which is fed to the policy/value heads. Compared to standard GCN/SAGE extractors, TreeMLP avoids degree normalization and learned edge transforms, yielding a lightweight, strictly local update that aligns well with symbolic expression trees and trains stably with PPO. 
+
+We give more details on TreeMLP in the Appendix. We also show this TreeMLP outperforms other popular graph based models, like GNNs and GraphSage (Figure~\ref{gnn-comparison}). 
+
+\textbf{Curriculum learning}. We consider multi-equation environments, where the agent solves a single equation chosen randomly from a larger set during each episode. Equations are selected via \textit{inverse sampling}, where the probability of choosing an equation is inversely proportional to the number of times it has been solved before. This curriculum ensures the agent spends more time trying to solve equations it hasn't solved before.
+
+\textbf{Success replay buffer}. A useful property of our environment is that solution traces are \emph{exact}: once a sequence of operations solves an instance (e.g., $ax+b=0$), replaying the same $(\text{op},\text{term})$ actions deterministically reproduces the solution. We exploit this by enabling a light-weight \emph{success replay} path in the env, where the solution traces $(s_t, a_t)_t$ are stored to a memory buffer and periodically mixed into the on-policy rollouts.
+
+\textbf{Relabel constants.} To improve parameter sharing across structurally identical equations that differ only by symbol names, we introduce a \emph{relabel-constants} action.
+When invoked, it applies a consistent partial renaming (e.g., $\{d\!\mapsto\!a,\, e\!\mapsto\!b,\, \dots\}$) to the current main equation and the working state, mapping arbitrary coefficients onto a compact canonical alphabet $\{a,b,c\}$. The environment stores the induced substitution map on a stack (\texttt{map\_constants\_history}) and uses the mapped equation for all subsequent steps. Upon solving, we \emph{unwind} the stack in reverse, substituting back the original symbols so the final answer is expressed in the user’s variables. This reduces input vocabulary entropy, prevents spurious overfitting to symbol IDs, and makes action terms like ``subtract $b$'' reusable across many instances.
+
+\textbf{Curiosity based rewards}. In a previous work, we showed curiosity based rewards enhanced learning \cite{} using a regular MLP was used. Interesting, we found curiosity \textit{worsened} learning with the TreeMLP (Figure~\ref{}), so we do \textit{not} use them here.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Results: Closed equations}
+\begin{table}[t!]
+\centering
+\footnotesize
+\caption{Greedy test accuracy for each agent across dataset.}
+\begin{tabular}{l c c c}
+\toprule
+Algorithm & small & large & poesia \\
+\midrule
+ConPoLe-local     & n/a  & n/a  & 0.765  \\
+ConPoLe          &  &  & 0.925  \\
+ppo          &  &  & ..  \\
+ppo-tree     &  &  & 0.815  \\
+ppo-tree-rc  &  &  & 0.96  \\
+\bottomrule
+\label{tab:test_greedy}
+\end{tabular}
+\end{table}
+
+\textit{Algorithms}. We use the standardized implementation of ppo from stable-baselines 3. We experimented with A2C and DQN but found worse performance. Hyperparameters, chosen via tuning, are reported in the Appendix. We trained for $10^7$ steps and evaluated every $5 \times 10^5$. We used three random seeds. 
+
+\textit{Datasets}. We tasked the agent with solving a random equation during each episode. We generate train/test sets by starting with $x$ and applying actions recursively. Recall actions are $(operation, term)$ pairs. The operations are as before, but we restrict terms to $(a, b, c)$ (we excluded $d, e$ since we wanted to favor long, rather than wide equations). Applying a single action generated equations like $ax, \log(x), x+b$, applying 2 actions equations like $ax+b, \log(x)+d, (x+b)/c$ and so on. We threw out any equations that SymPy couldn't solve, and considered multi-root equations solved when just one root was found (e.g. $\sin(x) = 0$ is solved if the agent found $x=0$ rather than $x = 2 n \pi$). We created a small dataset which included all equations of $depth<4$ (size 3874) and sub-sampled to a $10^3/10^2$ train/test split, and a large dataset of all equations of $depth<5$ (size 15625) sub-sampled to a $10^4/10^3$ train/test split. Finally, we also use the CommonCore datasets used in previous works.
+
+\textit{Results}. Figure~\ref{learning_curves_closed} shows the learning curve for each algorithm on all three datasets. We plot three performance metrics: (i) coverage, the fraction of train equation solved at least once, (ii) test accuracy following the greedy policy, (iii) and test accuracy following beam search of XXX.  The top row shows the CommonCore datasets (with coverage excluded since the train set is random and unbounded). The dashed black lines show the results for ConPoLe-local and ConPoLe from \cite{poesia2021contrastive}; these are the SOTA for symbolic equation solving. Notice our vanilla ppo-tree beats the ConPole-local, while our inductive biases ppo-tree-rc-buf beats the ConPole. Table~\ref{tab:test_greedy} reports the exact numbers. 
+
+The bottom two rows show the results for our the small and large datasets. For the small datasets, all four methods achieve perfect coverage, but only ppo-tree-rc and ppo-tree-rc-buff gives the highest $test_{greedy}$ and $test_{beam}$. For the large dataset, only ppo-tree-rc-buff and ppo-tree-buff have large coverage, and decent test accuracy $test_{beam} \approx 0.5$. By comparison, notice that $test_{greedy}, test_{beam} \approx 0, 0$ for ppp-tree and ppo-tree-rc. 
+
+The takeaway is that our inductive biases help in each case, and are comparable to the SOTA. 
+
+\textit{Analysis}. How does the agent learn to solve the equation? We show two solution traces below. Notice the policy is not always optimal. In X, they multiply by -1 twice. 
+\begin{enumerate}
+\item Equation: $c x + d + e(a x + b) = 0$
+\begin{verbatim}
+Step 1: cx + d + e(ax + b) = 0 | expand, None
+Step 2: aex + be + cx + d = 0 | collect, x
+Step 3: be + d + x*(ae + c) = 0 | subtract, x(ae + c)
+Step 4: -x(ae + c) = be + d | truediv, ae + c
+Step 5: -x = (be + d)/(ae + c) | multiply, -1
+Solved: x = -(be + d)/(a*e + c)
+\end{verbatim}
+\item Equation: $e + (a x + b)/(c x + d) = 0$
+\begin{verbatim}
+Step 1: e + (ax + b)/(cx + d) = 0 | truediv, 1/(cx + d)
+Step 2: (e + (ax + b)/(cx + d))(cx + d) = 0 | expand, None
+Step 3: ax + b + cex + de = 0 | collect, x
+Step 4: b + de + x*(a + ce) = 0 | subtract, x(a + ce)
+Step 5: -x(a + ce) = b + de | expand, None
+Step 6: -ax - cex = b + de | collect, x
+Step 7: x*(-a - ce) = b + de | truediv, -a - ce
+Solved: x = (b + de)/(-a - c*e)
+\end{verbatim}
+\end{enumerate}
+
+Figure~\ref{} shows the learned represenatations. Comments. 
+
+\begin{itemize}
+    \item Representation learning: show some embedding.
+    \item Failure cases.
+    \item Comment: this is done by X.
+\end{itemize}
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Results: Open equations}
+Now we consider the harder class of \emph{open equations}. We train a separate change–of–variables policy $\pi_{\text{cov}}$ which, given an input equation, proposes a substitution $x \mapsto \phi(x)$ that simplifies the instance into a canonical, easier-to-solve form. We consider five basic templates
+\begin{align}
+    & a x^2 + b x + c = 0, x \rightarrow x - b/2a \\
+    &  a x^3 + b x^2 + c x + d = 0, x \rightarrow x - b/3a \\
+    & a x^4 + b x^3 + c x^2 + d x + e = 0, x \rightarrow x - b/4a \\
+    & a e^{k x} + b e^{-k x} + c = 0, x \rightarrow \frac{1}{k}\log x
+\end{align}
+The rhs of each shows the solution cov. Rather that use GAN or VAE, we decided to frame $\pi_{cov}$ as an RL problem. 
+
+Our MDP is as follows:
+
+
+
+We train a CoV agent using PPO with TreeMLP. Figure~\ref{cov_results} shows the results. The agent learns to solve the open equations, achieving high accuracy on both greedy and beam search evaluation.
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=\linewidth]{cov_results.png}
+    \caption{Performance of the CoV agent on open equations. The agent learns to propose correct substitutions to simplify the equations.}
+    \label{cov_results}
+\end{figure}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Notes}
+
+\begin{itemize}
+    \item Abel. Start with 1 root, 2 root + operations. Verify all equaiton are (i) solvable and (ii) solvable within the max steps... I think equations like $a^18 x^3$ arise, from applying $(mul,a)$ and $pow$ multiple times.
+    \item Poesia
+    \item Generate train on the fly
+    \item emtrics for each equation type.
+    \item Curisoity + tree
+    \item Square root equation that mma couldnt solve
+    \item Fixed unsupervised. Move to calculus.
+    \item Action embeddings?
+    \item The smith and the wizard.
+\end{itemize}
+
+% Acknowledgements should only appear in the accepted version.
+\section*{Acknowledgements}
+
+
+\section*{Impact Statement}
+
+Authors are \textbf{required} to include a statement of the potential 
+broader impact of their work, including its ethical aspects and future 
+societal consequences. This statement should be in an unnumbered 
+section at the end of the paper (co-located with Acknowledgements -- 
+the two may appear in either order, but both must be before References), 
+and does not count toward the paper page limit. In many cases, where 
+the ethical impacts and expected societal implications are those that 
+are well established when advancing the field of Machine Learning, 
+substantial discussion is not required, and a simple statement such 
+as the following will suffice:
+
+\nocite{langley00}
+
+\bibliography{ref}
+\bibliographystyle{icml2025}
+
+\newpage
+\appendix
+\onecolumn
+
+
+\subsection{Macroactions}
+Here we justify why the three macroactions $$(expand, none), (collect, x), (mul,-1)$$ discussed in the main text are \textit{required} to solve the equations we consider, and are not simple conveniences for the RL agent. Consider the action set \textit{without} these macroactions, which we requote below
+\begin{align}
+O &= \{\,\op{add},\ \op{subtract},\ \op{mul},\ \op{divide}\,\} \cup  \{\, \op{square}, \op{sqrt},\ \op{exp},\ \op{log}, \op{sin},\ \op{cos}\, \op{asin},\ \op{acos}\,\} \\
+T   &= \SubExpr(\text{lhs}) \cup \SubExpr(\text{rhs}), \\
+A   &= (O \times T) \cup \{(Expand, None)\} \{(\op{collect}, x)\} \cup \{(\op{multiply}, -1)\}.
+\end{align}
+Now consider the equation $dx + c(ax+b) = e$. One must distribute $c$ into the bracketed term $ax+b$. The action set above cannot do this. One needs the $expand$ macroaction for this. Moreover, once the term is expanded we get $dx+cax+cb = e$ and one needs to factor the $x$ common to both the first and second terms. $collect x$ performs this function. Finally, consider the equation $-x = b$. Since $-1$ is not included in our term set, one needs $(mul,-1)$ to solve the equation. (One could alternatively add $-1$ to the term set but we chose not to.)
+
+
+\subsection{Dataset generation: Rational Equation  }
+
+To supplement the recursive datasets, we constructed rational equations of the form
+\[
+\frac{a x + b}{c x + a} + b = 0,
+\]
+where \(a,b,c\) are (non-zero) symbolic coefficients. We excluded degenerate cases such as denominators that vanish identically or cancel trivially with numerators.
+
+Examples of retained equations include:
+\[
+\frac{x+b}{c x + a} = 0 
+\quad \Rightarrow \quad x = -b,
+\]
+\[
+\frac{a x+b}{c x+a} + b = 0 
+\quad \Rightarrow \quad x = \frac{-b - a b}{a + c b},
+\]
+\[
+\frac{a x+b}{c x+a} - c = 0 
+\quad \Rightarrow \quad x = \frac{-b + a c}{a - c^2}.
+\]
+
+These rational forms were merged into both the small and large datasets, with their proportion limited to preserve diversity across other functional forms (logarithmic, trigonometric, exponential, etc.).
+
+\subsection{Illegal actions}
+The main issue was to avoid illegal division by zero. This was not as simple as precluding $(div,0)$ from the action set. One had to prohibit `hidden' division by zero, such as prohibiting division by $(x+a)$ or $(x+b)$ for an equation of form $(x+a)(x+b)$. To do this, we checked if the equation of form $P(x)Q(x)..$, where $P(x),Q(x)$ are polynomials in $x$, and then removed $(div, P, Q, ...)$ from the action set.
+
+\subsection{Hyperparameters}
+We used Stable Baselines 3's default hyperparameters for A2C and PPO (Table~\ref{hyperparams}).
+
+\begin{table}[h]
+\small
+\centering
+\begin{tabular}{l p{0.7\textwidth}}
+\toprule
+\textbf{Algorithm} & \textbf{Hyperparameters} \\
+\midrule
+PPO & \(learning\_rate=0.0003\), \(n\_steps=2048\), \(batch\_size=64\), \(n\_epochs=10\), \(gamma=0.99\), \(gae\_lambda=0.95\), \(clip\_range=0.2\), \(ent\_coef=0.0\), \(vf\_coef=0.5\), \(max\_grad\_norm=0.5\), \(normalize\_advantage=True\), \(device='auto'\) \\
+PPO-tree & \(learning\_rate=0.0007\), \(n\_steps=5\), \(gamma=0.99\)
+\bottomrule
+\end{tabular}
+\caption{Default hyperparameters for A2C and PPO from Stable Baselines 3.}
+\label{hyperparams}
+\end{table}
+
+
+\subsection{Solution Traces}
+Below are the solution traces for each equation in the fixed equation environment. Notice the solution trace is not always optimal. For instance, $ax+b=0$ could be solved with $(sub,b),(div,a)$, but instead the agent selects $(sub,ax)$ and then $(mul,-1)$. "Truediv" is the sympy notation for divide.
+
+\begin{enumerate}
+\item Equation: $a + x = 0$
+\begin{verbatim}
+Step 1: a + x = 0 | subtract, a
+Solved: x = -a
+\end{verbatim}
+\item Equation: $a x = 0$
+\begin{verbatim}
+Step 1: a*x = 0 | div, a
+Solved: x = 0
+\end{verbatim}
+\item Equation: $a x + b = 0$
+\begin{verbatim}
+Step 1: ax + b = 0 | subtract, ax
+Step 2: -ax = b | multiply, -1
+Step 3: ax = -b | div, a
+Solved: x = -b/a
+\end{verbatim}
+\item Equation: $a/x + b = 0$
+\begin{verbatim}
+Step 1: a/x + b = 0 | subtract, b
+Step 2: a/x = -b | truediv, 1/x
+Step 3: -b*x = a | truediv, b
+Step 4: -x = a/b | multiply, -1
+Solved: x = -a/b
+\end{verbatim}
+\item Equation: $c(a x + b) + d = 0$
+\begin{verbatim}
+Step 1: c*(ax + b) + d = 0 | expand, None
+Step 2: acx + bc + d = 0 | subtract, acx
+Step 3: -acx = bc + d | multiply, -1
+Step 4: acx = -bc - d | truediv, c
+Step 5: ax = (-bc - d)/c | truediv, a
+Solved: x = (-bc - d)/(ac)
+\end{verbatim}
+\item Equation: $c + d/(a x + b) = 0$
+\begin{verbatim}
+Step 1: c + d/(ax + b) = 0 | subtract, c
+Step 2: d/(ax + b) = -c | multiply, (ax + b)
+Step 3: d = -c (ax + b) | expand, None
+Step 4: d = -c ax - c b | multiply, -1
+Step 5: -d = c ax + c b | subtract, c b
+Step 6: -d - c b = c ax | truediv, c
+Step 7: (-d - c b)/c = ax | truediv, a
+Step 8: ((-d - c b)/c)/a = x | truediv, 1/a
+Solved: x = (-d - c b)/(c a)
+\end{verbatim}
+\item Equation: $c x + d + e(a x + b) = 0$
+\begin{verbatim}
+Step 1: cx + d + e(ax + b) = 0 | expand, None
+Step 2: aex + be + cx + d = 0 | collect, x
+Step 3: be + d + x*(ae + c) = 0 | subtract, x(ae + c)
+Step 4: -x(ae + c) = be + d | truediv, ae + c
+Step 5: -x = (be + d)/(ae + c) | multiply, -1
+Solved: x = -(be + d)/(a*e + c)
+\end{verbatim}
+\item Equation: $e + (a x + b)/(c x + d) = 0$
+\begin{verbatim}
+Step 1: e + (ax + b)/(cx + d) = 0 | truediv, 1/(cx + d)
+Step 2: (e + (ax + b)/(cx + d))(cx + d) = 0 | expand, None
+Step 3: ax + b + cex + de = 0 | collect, x
+Step 4: b + de + x*(a + ce) = 0 | subtract, x(a + ce)
+Step 5: -x(a + ce) = b + de | expand, None
+Step 6: -ax - cex = b + de | collect, x
+Step 7: x*(-a - ce) = b + de | truediv, -a - ce
+Solved: x = (b + de)/(-a - c*e)
+\end{verbatim}
+\end{enumerate}
+
+
+\subsection{TreeMLP Details}
+\label{app:treemlp}
+
+\paragraph{Architecture.}
+TreeMLP embeds node IDs, projects to a hidden size, and performs $K$ message-passing stages over the (directed) expression tree.
+At each stage it sums incoming neighbor states, concatenates the result with the fixed input embedding, and applies a two-layer MLP with ReLU.
+A masked global pool (mean or max) produces the graph embedding exposed to the policy/value heads.
+
+\begin{algorithm}[t]
+\caption{TreeMLP message passing and pooling}
+\label{alg:treemlp}
+\begin{algorithmic}[1]
+\Require node IDs $\mathbf{X}$, edges $(\text{src},\text{dst})$, masks $m_{\text{node}}, m_{\text{edge}}$, steps $K$
+\State $\text{emb} \leftarrow \mathrm{Proj}(\mathrm{Embed}(\mathbf{X}))$ \Comment{shape $[B,N,H]$}
+\State $h \leftarrow \text{emb}$
+\For{$k=1$ \textbf{to} $K$}
+  \State $\mathcal{E} \leftarrow \{(i\!\to\!j) \mid m_{\text{edge}}(i\!\to\!j)=1\}$
+  \State $\text{agg}[j] \leftarrow \sum_{(i\to j)\in \mathcal{E}} h[i]$ \Comment{scatter-sum over incoming edges}
+  \State $h \leftarrow \mathrm{MLP}\big([\text{emb}, \text{agg}]\big)$
+  \State $h \leftarrow h \odot m_{\text{node}}$ \Comment{mask padded nodes}
+\EndFor
+\State \Return $\mathrm{pool}(h, m_{\text{node}})$ \Comment{mean or max}
+\end{algorithmic}
+\end{algorithm}
+
+
+% ---------------------------------------------
+% (Optional) minimal code listing for forward()
+% ---------------------------------------------
+\begin{lstlisting}[language=Python,basicstyle=\ttfamily\small,caption={TreeMLP forward pass (minimal).},label={lst:treemlp-forward}]
+def forward(self, obs: dict) -> torch.Tensor:
+    node_ids  = self._to_device(obs["node_features"], self.device)
+    edge_index= self._to_device(obs["edge_index"], self.device)
+    node_mask = self._to_device(obs["node_mask"], self.device)
+    edge_mask = self._to_device(obs["edge_mask"], self.device)
+
+    node_idx = self._id_to_idx(node_ids) if node_ids.dtype != torch.long else node_ids
+    B, N = node_idx.shape
+    _, _, E = edge_index.shape
+
+    emb = self.embed(node_idx)                  # [B,N,embed_dim]
+    emb = self.embed_proj(emb)                  # [B,N,H]
+    h = emb.clone()
+
+    src = edge_index[:, 0, :].long()           # [B,E]
+    dst = edge_index[:, 1, :].long()           # [B,E]
+    batch_idx = torch.arange(B, device=self.device).unsqueeze(1).expand(B, E)
+
+    for _ in range(self.K):
+        src_flat = src.reshape(-1)
+        dst_flat = dst.reshape(-1)
+        b_flat   = batch_idx.reshape(-1)
+        m_flat   = edge_mask.reshape(-1).bool()
+
+        src_flat, dst_flat, b_flat = src_flat[m_flat], dst_flat[m_flat], b_flat[m_flat]
+        src_idx = b_flat * N + src_flat
+        dst_idx = b_flat * N + dst_flat
+
+        h_flat   = h.reshape(B * N, self.hidden_dim)
+        messages = h_flat[src_idx]                         # [M,H]
+
+        agg_flat = torch.zeros_like(h_flat)                # [B*N,H]
+        agg_flat.index_add_(0, dst_idx, messages)          # sum incoming
+        agg = agg_flat.reshape(B, N, self.hidden_dim)      # [B,N,H]
+
+        h = self.node_mlp(torch.cat([emb, agg], dim=-1))   # [B,N,H]
+        h = h * node_mask.unsqueeze(-1).float()
+
+    if self.pooling == "mean":
+        denom = node_mask.sum(dim=1, keepdim=True).clamp(min=1).float()
+        g = h.sum(dim=1) / denom
+    else:
+        if self._minus_inf is None or self._dtype_cache != h.dtype:
+            self._minus_inf = torch.finfo(h.dtype).min
+            self._dtype_cache = h.dtype
+        g = h.masked_fill(~node_mask.unsqueeze(-1), self._minus_inf).max(dim=1).values
+
+    return self.proj(g)
+\end{lstlisting}
+
+\paragraph{Implementation notes.}
+We use fixed-size padding with boolean masks for nodes/edges, scatter-add for neighbor aggregation, and pool with mask awareness.
+All tensors are moved to CUDA when available; no MPS is used.
+
+
+\subsection{Ablations}
+
+
+
+\begin{itemize}
+    \item Figure~\ref{ablations} shows the ablation study. Turning off the dense rewards and the curriculum degrades performance. The main drawack of sprase rewards is \textit{far} longer run times. We had to include a max timeout of 1s per step in order to get the results to finish.  
+    \item Figure~\ref{gnn-comparison} shows the TreeMLP outperforms regular GNN and GraphSage; the Tree is necessary
+    \item Finally, figure X shows adding curiosity degrades performance. This constrasts with earlier work, where regular ppo (non-tree) improves the performance \cite{}.
+\end{itemize}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{gnn-comparison.png}
+    \caption{TreeMLP outperforms GNN, and GraphSage on the small datasets. Mean of three random seeds with shading to min and max.}
+  \label{gnn-comparison}
+\end{figure}
+
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{ablations.png}
+    \caption{Ablation study on small datasets.}
+  \label{ablations}
+\end{figure}
+
+
+
+
+\end{document}

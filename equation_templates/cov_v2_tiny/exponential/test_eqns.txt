@@ -1,0 +1,21 @@
+# 20 test equations for class=exponential
+a*exp(2*x) + 3*c*exp(-2*x) - 3*d
+a + 5*e*exp(5*x) - f*exp(-5*x)
+4*a*exp(x) - 3*b - 4*f*exp(-x)
+5*a*exp(x) + 5*c - 2*f*exp(-x)
+5*b + 2*c*exp(-x) - 5*d*exp(x)
+-2*a + 2*b*exp(-2*x) + 5*c*exp(2*x)
+-3*c*exp(-3*x) + 2*e - 2*f*exp(3*x)
+3*a*exp(-2*x) - 2*e*exp(2*x) - g
+5*a*exp(-3*x) + b*exp(3*x) - 2*d
+-5*b - 3*d*exp(2*x) - 5*e*exp(-2*x)
+-4*a*exp(-x) + 5*c + 2*d*exp(x)
+4*a + 2*b*exp(-3*x) + 2*e*exp(3*x)
+4*b + 2*c*exp(-3*x) - 2*g*exp(3*x)
+2*c*exp(-3*x) + 5*d + 4*e*exp(3*x)
+-5*d + 3*f*exp(2*x) - 4*g*exp(-2*x)
+-2*a - 4*b*exp(x) - 3*g*exp(-x)
+3*a*exp(-x) - 3*c*exp(x) - 3*f
+2*b*exp(-2*x) + 3*e - 5*f*exp(2*x)
+3*d*exp(3*x) - e + 3*f*exp(-3*x)
+-3*b*exp(-5*x) + 4*e - 2*g*exp(5*x)

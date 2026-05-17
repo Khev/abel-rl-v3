@@ -1094,14 +1094,24 @@ def sympy_expression_to_graph(expr, feature_dict):
         nodes.append(cur_idx)
 
         # Get feature vector
+        # Detect encoding type (1D int or 2D list)
+        first_val = next(iter(feature_dict.values()))
+        is_1d = isinstance(first_val, int)
+        default_val = 0 if is_1d else [99, 99]
+
+        # Get feature vector
         if node in feature_dict:
             node_features.append(feature_dict[node])
         elif isinstance(node, (int, float, Integer, Float)):  # Handle numbers
-            node_features.append([5, node])  # Category 5 = real numbers
+            if is_1d:
+                # For 1D, if number not in dict, map to default (e.g. 0)
+                node_features.append(feature_dict.get(node, default_val))
+            else:
+                node_features.append([5, node])  # Category 5 = real numbers
         elif node.is_Symbol:
-            node_features.append(feature_dict.get(node, [99, 99]))  # Use feature_dict encoding
+            node_features.append(feature_dict.get(node, default_val))
         else:
-            node_features.append(feature_dict.get(node.func.__name__.lower(), [99, 99]))  # Get encoding
+            node_features.append(feature_dict.get(node.func.__name__.lower(), default_val))
 
         # Connect to parent (if applicable)
         if parent_idx is not None:

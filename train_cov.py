@@ -145,6 +145,7 @@ def make_agent(
     seed: int = 0,
     load_path: Optional[str] = None,
     tree_kwargs: Optional[Dict[str, Any]] = None,
+    verbose: int = 0,
 ):
     """Create or load a PPO agent (MlpPolicy or MultiInputPolicy with TreeMLPExtractor)."""
     if load_path and os.path.isfile(load_path):
@@ -158,7 +159,7 @@ def make_agent(
             env=env,
             policy_kwargs=policy_kwargs,
             seed=seed,
-            verbose=0,
+            verbose=verbose,
             n_steps=n_steps,
             learning_rate=3e-4,
             gamma=1.0,
@@ -200,7 +201,7 @@ def make_agent(
         policy="MultiInputPolicy",
         env=env,
         policy_kwargs=kwargs,
-        verbose=0,
+        verbose=verbose,
         seed=seed,
         n_steps=n_steps,
         learning_rate=3e-4,
@@ -227,7 +228,7 @@ class AccuracyLoggingCallback(BaseCallback):
         # Create a unique directory for this run to save data
         timestamp = dt.now().strftime("%Y-%m-%d_%H-%M-%S")
         dir_name = f"{self.algo_name}_{timestamp}"
-        self.save_path = os.path.join("data", "cov", dir_name)
+        self.save_path = os.path.join("gemini", "cov", dir_name)
         os.makedirs(self.save_path, exist_ok=True)
 
         # Initialize lists to store data
@@ -262,6 +263,18 @@ class AccuracyLoggingCallback(BaseCallback):
                 f"test_greedy={test_greedy_acc:.3f} | "
                 f"test_beam={test_beam_acc:.3f}"
             )
+
+            # Save CSV immediately
+            data = {
+                "timesteps": self.timesteps,
+                "train_greedy_acc": self.train_greedy_accs,
+                "train_beam_acc": self.train_beam_accs,
+                "test_greedy_acc": self.test_greedy_accs,
+                "test_beam_acc": self.test_beam_accs,
+            }
+            df = pd.DataFrame(data)
+            filepath = os.path.join(self.save_path, "accuracies.csv")
+            df.to_csv(filepath, index=False)
 
         return True
 
@@ -515,7 +528,8 @@ def eval_avg_reward(env, model, n_episodes=20, max_steps=5, deterministic=True, 
         for eqn in test_eqns:
             temp_env = covEnv(
                 eqn, env.term_bank, max_depth=env.max_depth, step_penalty=env.step_penalty,
-                f_penalty=env.f_penalty, hist_len=env.hist_len, multi_eqn=False, use_curriculum=False
+                f_penalty=env.f_penalty, hist_len=env.hist_len, multi_eqn=False, use_curriculum=False,
+                state_rep=env.state_rep
             )
             totals = []
             for i in range(n_episodes):
@@ -540,8 +554,10 @@ def test_greedy(env, model, max_steps=10, test_eqns=None):
         obs, info = env.reset(seed=SEED)
         done, truncated = False, False
         steps, total_reward = 0, 0.0
+        print(f"DEBUG: env.state_rep={env.state_rep}")
         print('Greedy rollout')
         while not (done or truncated) and steps < max_steps:
+            # print(f"DEBUG: obs type={type(obs)}")
             action, _ = model.predict(obs, deterministic=True)
             obs, reward, done, truncated, info = env.step(action)
             total_reward += reward
@@ -554,7 +570,8 @@ def test_greedy(env, model, max_steps=10, test_eqns=None):
         for eqn in test_eqns:
             temp_env = covEnv(
                 eqn, env.term_bank, max_depth=env.max_depth, step_penalty=env.step_penalty,
-                f_penalty=env.f_penalty, hist_len=env.hist_len, multi_eqn=False, use_curriculum=False
+                f_penalty=env.f_penalty, hist_len=env.hist_len, multi_eqn=False, use_curriculum=False,
+                state_rep=env.state_rep
             )
             obs, info = temp_env.reset(seed=SEED)
             done, truncated = False, False
@@ -596,7 +613,8 @@ def test_10(env, model, n_trials=10, max_steps=10, test_eqns=None):
         for eqn in test_eqns:
             temp_env = covEnv(
                 eqn, env.term_bank, max_depth=env.max_depth, step_penalty=env.step_penalty,
-                f_penalty=env.f_penalty, hist_len=env.hist_len, multi_eqn=False, use_curriculum=False
+                f_penalty=env.f_penalty, hist_len=env.hist_len, multi_eqn=False, use_curriculum=False,
+                state_rep=env.state_rep
             )
             success_any = False
             best_delta = -1e9
@@ -619,111 +637,117 @@ def test_10(env, model, n_trials=10, max_steps=10, test_eqns=None):
         return success_count / len(test_eqns)
 
 # ---------------------------------------------------------------------
-# Beam search (already using temp_env correctly in test_eqns branch)
+# Beam search — matches env's compose semantics: f(x) = base_op(x, cov_inner)
+# Tracks action_history per beam entry so policy sees in-distribution states.
 # ---------------------------------------------------------------------
-def beam_search(env, model, width=3, max_depth=3, test_eqns=None):
+_BEAM_OPS = {
+    "ADD": lambda a, b: a + b,
+    "SUB": lambda a, b: a - b,
+    "MUL": lambda a, b: a * b,
+    "DIV": lambda a, b: a / b,
+}
+
+
+def _beam_search_one(eqn_env, model, width, max_depth):
+    """Run beam search on a single env (already pinned to one equation).
+
+    Returns (best_delta, best_f_or_None).
+
+    Beam entry = (score, depth, base_op, cov_inner, action_history_tuple).
+      - base_op is None until the first action; once set, stays fixed (mirrors env).
+      - cov_inner is built compositionally via base_op-agnostic ops on subsequent actions.
+      - f(x) = base_op(x, cov_inner) at evaluation time.
+      - action_history_tuple is the last hist_len actions taken on this path.
+    """
     from heapq import nlargest
-    if test_eqns is None:
-        beam = [(0.0, 0, env.x, None)]
-        best = (-1e9, None)
-        for depth in range(max_depth + 1):
-            cand = []
-            for score, d, cov, _ in beam:
-                after = subs_x_with_f(env.main_eqn, cov, env.x)
-                delta = C(env.main_eqn) - C(after)
-                if delta > best[0]:
-                    best = (delta, cov)
-                if d == max_depth:
+    xsym = eqn_env.x
+    main_eqn = eqn_env.main_eqn
+    base_cmplx = C(main_eqn)
+    init_history = (-1,) * eqn_env.hist_len
+
+    # initial beam: empty path
+    beam = [(0.0, 0, None, sp.Integer(0), init_history)]
+    best = (-1e9, None)
+
+    for depth in range(max_depth + 1):
+        cand = []
+        for score, d, base_op, cov_inner, hist in beam:
+            # Evaluate this path's f(x) and delta
+            if base_op is None:
+                f = xsym  # no actions => identity sub, delta=0
+            else:
+                f = _BEAM_OPS[base_op](xsym, cov_inner)
+            try:
+                after = sp.simplify(sp.sympify(main_eqn).subs(xsym, f))
+                delta = base_cmplx - C(after)
+            except Exception:
+                delta = -1e9
+            if delta > best[0]:
+                best = (delta, f)
+            if d == max_depth:
+                continue
+            # Query policy with state reflecting this path
+            eqn_env.cov = cov_inner if base_op is not None else sp.Integer(0)
+            eqn_env.depth = d
+            eqn_env.action_history = list(hist)
+            obs_core = eqn_env.to_vec(eqn_env.main_eqn, 0)[0]
+            if not isinstance(obs_core, dict):
+                obs_core = obs_core.astype(np.float32)
+            obs = eqn_env._augment_obs(obs_core)
+            obs_t = model.policy.obs_to_tensor(obs)[0]
+            dist = model.policy.get_distribution(obs_t)
+            logits = dist.distribution.logits.detach().cpu().numpy().squeeze()
+            probs = np.exp(logits - logits.max())
+            probs /= probs.sum()
+            topk = np.argsort(-probs)[:width]
+            for a in topk:
+                op, tau = eqn_env.actions[int(a)]
+                if op == "STOP":
+                    # STOP terminates without advancing cov; the path's current
+                    # delta is already captured above. Skip expansion.
                     continue
-                _, _ = env.reset(seed=SEED+depth)
-                env.cov = cov
-                env.depth = d
-                if hasattr(env, "hist_len"):
-                    env.action_history = [-1] * env.hist_len
-                obs_core = env.to_vec(env.main_eqn, 0)[0].astype(np.float32)
-                obs = env._augment_obs(obs_core)
-                obs_t = model.policy.obs_to_tensor(obs)[0]
-                dist = model.policy.get_distribution(obs_t)
-                logits = dist.distribution.logits.detach().cpu().numpy()
-                logits = np.squeeze(logits)
-                probs = np.exp(logits - logits.max())
-                probs /= probs.sum()
-                topk = np.argsort(-probs)[:width]
-                for a in topk:
-                    op, tau = env.actions[a]
-                    if op == "STOP":
-                        continue
-                    try:
-                        if op == "ADD":
-                            tmp = sp.simplify(cov + tau)
-                        elif op == "SUB":
-                            tmp = sp.simplify(cov - tau)
-                        elif op == "MUL":
-                            tmp = sp.simplify(cov * tau)
-                        else:
-                            tmp = sp.simplify(cov / tau)
-                    except Exception:
-                        continue
-                    cand.append((score + float(probs[a]), d + 1, tmp, None))
-                beam = nlargest(width, cand, key=lambda z: z[0])
-                if not beam:
-                    break
-        return best
-    else:
-        success_count = 0
-        for eqn in test_eqns:
-            temp_env = covEnv(
-                eqn, env.term_bank, max_depth=env.max_depth, step_penalty=env.step_penalty,
-                f_penalty=env.f_penalty, hist_len=env.hist_len, multi_eqn=False, use_curriculum=False
-            )
-            beam = [(0.0, 0, temp_env.x, None)]
-            best = (-1e9, None)
-            for depth in range(max_depth + 1):
-                cand = []
-                for score, d, cov, _ in beam:
-                    after = subs_x_with_f(temp_env.main_eqn, cov, temp_env.x)
-                    delta = C(temp_env.main_eqn) - C(after)
-                    if delta > best[0]:
-                        best = (delta, cov)
-                    if d == max_depth:
-                        continue
-                    _, _ = temp_env.reset(seed=SEED+depth)
-                    temp_env.cov = cov
-                    temp_env.depth = d
-                    if hasattr(temp_env, "hist_len"):
-                        temp_env.action_history = [-1] * temp_env.hist_len
-                    obs_core = temp_env.to_vec(temp_env.main_eqn, 0)[0].astype(np.float32)
-                    obs = temp_env._augment_obs(obs_core)
-                    obs_t = model.policy.obs_to_tensor(obs)[0]
-                    dist = model.policy.get_distribution(obs_t)
-                    logits = dist.distribution.logits.detach().cpu().numpy()
-                    logits = np.squeeze(logits)
-                    probs = np.exp(logits - logits.max())
-                    probs /= probs.sum()
-                    topk = np.argsort(-probs)[:width]
-                    for a in topk:
-                        op, tau = temp_env.actions[a]
-                        if op == "STOP":
-                            continue
-                        try:
-                            if op == "ADD":
-                                tmp = sp.simplify(cov + tau)
-                            elif op == "SUB":
-                                tmp = sp.simplify(cov - tau)
-                            elif op == "MUL":
-                                tmp = sp.simplify(cov * tau)
-                            else:
-                                tmp = sp.simplify(cov / tau)
-                        except Exception:
-                            continue
-                        cand.append((score + float(probs[a]), d + 1, tmp, None))
-                    beam = nlargest(width, cand, key=lambda z: z[0])
-                    if not beam:
-                        break
-            delta, _ = best
-            if delta > 0:
-                success_count += 1
-        return success_count / len(test_eqns)
+                try:
+                    if base_op is None:
+                        # first action: pin base_op and set cov_inner = tau
+                        new_base_op = op
+                        new_cov_inner = sp.sympify(tau)
+                    else:
+                        new_base_op = base_op
+                        new_cov_inner = sp.simplify(_BEAM_OPS[op](cov_inner, tau))
+                except Exception:
+                    continue
+                new_hist = tuple(list(hist)[1:] + [int(a)])
+                new_score = score + float(np.log(probs[a] + 1e-12))
+                cand.append((new_score, d + 1, new_base_op, new_cov_inner, new_hist))
+        beam = nlargest(width, cand, key=lambda z: z[0])
+        if not beam:
+            break
+
+    return best
+
+
+def beam_search(env, model, width=3, max_depth=3, test_eqns=None):
+    """Beam search over CoV action paths.
+
+    - If `test_eqns is None`: searches on `env.main_eqn`, returns (best_delta, best_f).
+    - Else: iterates each test equation in a single-equation env clone and returns
+      the success rate (delta > 0).
+    """
+    if test_eqns is None:
+        return _beam_search_one(env, model, width, max_depth)
+
+    success_count = 0
+    for eqn in test_eqns:
+        temp_env = covEnv(
+            eqn, env.term_bank, max_depth=env.max_depth, step_penalty=env.step_penalty,
+            f_penalty=env.f_penalty, hist_len=env.hist_len, multi_eqn=False,
+            use_curriculum=False, state_rep=env.state_rep,
+            dataset_path=getattr(env, "dataset_path", None),
+        )
+        best_delta, _ = _beam_search_one(temp_env, model, width, max_depth)
+        if best_delta > 0:
+            success_count += 1
+    return success_count / len(test_eqns)
 
 # ---------------------------------------------------------------------
 # Train / Save
@@ -750,7 +774,8 @@ def main(args):
         hist_len=args.hist_len,
         multi_eqn=args.multi_eqn,
         use_curriculum=args.use_curriculum,
-        gen=args.gen
+        gen=args.gen,
+        dataset_path=args.dataset_path,
     )
     print(f'\nTrain eqns, test eqns = {len(env.train_eqns)}, {len(env.test_eqns)}\n')
 
@@ -766,7 +791,8 @@ def main(args):
         'vf_sizes': [128],
     }
     model = make_agent(agent=args.agent, env=env, hidden_dim=128, n_steps=args.n_steps,
-                       ent_coef=args.ent_coef, seed=SEED, tree_kwargs=tree_kwargs)
+                       ent_coef=args.ent_coef, seed=SEED, tree_kwargs=tree_kwargs,
+                       verbose=args.verbose)
 
     # Callbacks
     cb_ent = EntropyAnnealCallback(start=0.02, end=0.0, total_timesteps=args.Ntrain, by_rollout=True)
@@ -846,6 +872,8 @@ if __name__ == "__main__":
                            help='Maximum expression tree depth for generated equations.')
     env_group.add_argument('--gen', type=int, default=5,
                            help='Number of symbolic constants (a, b, c, ...) to use.')
+    env_group.add_argument('--dataset_path', type=str, default=None,
+                           help='Override gen-based lookup; load train/test_eqns.txt from this dir.')
     env_group.add_argument('--hist_len', type=int, default=10,
                            help='Number of previous states to include in the observation history.')
     env_group.add_argument('--step_penalty', type=float, default=0.1,
@@ -868,10 +896,24 @@ if __name__ == "__main__":
     log_group = parser.add_argument_group('Logging Settings')
     log_group.add_argument('--log_interval', type=int, default=None,
                            help='Interval for logging training progress. Defaults to Ntrain / 10.')
+    log_group.add_argument('--verbose', type=int, default=1,
+                           help='PPO verbosity (0=silent, 1=per-rollout stats, 2=debug). Default 1.')
+
+    # Reproducibility
+    repro_group = parser.add_argument_group('Reproducibility')
+    repro_group.add_argument('--seed', type=int, default=0,
+                             help='Master RNG seed (Python random, numpy, torch, env reset).')
 
     args = parser.parse_args()
     args.multi_eqn = True
     args.use_curriculum = True
+
+    # Apply seed override
+    SEED = args.seed
+    random.seed(SEED)
+    np.random.seed(SEED)
+    torch.manual_seed(SEED)
+    torch.cuda.manual_seed_all(SEED)
 
     if args.log_interval is None:
         args.log_interval = args.Ntrain // 50

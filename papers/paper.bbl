@@ -1,0 +1,55 @@
+\begin{thebibliography}{7}
+\providecommand{\natexlab}[1]{#1}
+\providecommand{\url}[1]{\texttt{#1}}
+\expandafter\ifx\csname urlstyle\endcsname\relax
+  \providecommand{\doi}[1]{doi: #1}\else
+  \providecommand{\doi}{doi: \begingroup \urlstyle{rm}\Url}\fi
+
+\bibitem[Dabelow \& Ueda(2024)Dabelow and Ueda]{dabelow2024symbolic}
+Dabelow, L. and Ueda, M.
+\newblock Symbolic equation solving via reinforcement learning.
+\newblock \emph{arXiv preprint arXiv:2404.17499}, 2024.
+
+\bibitem[Degrave et~al.(2022)Degrave, Felber, Buchli, Neunert, Tracey,
+  Carpanese, Ewalds, Hafner, Abdolmaleki, de~Las~Casas,
+  et~al.]{degrave2022magnetic}
+Degrave, J., Felber, F., Buchli, J., Neunert, M., Tracey, B., Carpanese, F.,
+  Ewalds, T., Hafner, R., Abdolmaleki, A., de~Las~Casas, D., et~al.
+\newblock Magnetic control of tokamak plasmas through deep reinforcement
+  learning.
+\newblock \emph{Nature}, 602\penalty0 (7897):\penalty0 414--419, 2022.
+
+\bibitem[Langley(2000)]{langley00}
+Langley, P.
+\newblock Crafting papers on machine learning.
+\newblock In \emph{Proceedings of the 17th International Conference on Machine
+  Learning (ICML 2000)}, pp.\  1207--1216, Stanford, CA, 2000.
+
+\bibitem[Ng et~al.(2006)Ng, Coates, Diel, Ganapathi, Schulte, Tse, Berger, and
+  Liang]{ng2006autonomous}
+Ng, A.~Y., Coates, A., Diel, M., Ganapathi, V., Schulte, J., Tse, B., Berger,
+  E., and Liang, E.
+\newblock Autonomous inverted helicopter flight via reinforcement learning.
+\newblock In \emph{Experimental Robotics IX}, pp.\  363--372. Springer, 2006.
+
+\bibitem[Poesia et~al.(2021)Poesia, Dong, and Goodman]{poesia2021contrastive}
+Poesia, G., Dong, W., and Goodman, N.
+\newblock Contrastive reinforcement learning of symbolic reasoning domains.
+\newblock In \emph{Advances in Neural Information Processing Systems},
+  volume~34, pp.\  17729--17741, 2021.
+
+\bibitem[Schulman et~al.(2017)Schulman, Wolski, Dhariwal, Radford, and
+  Klimov]{schulman2017proximal}
+Schulman, J., Wolski, F., Dhariwal, P., Radford, A., and Klimov, O.
+\newblock Proximal policy optimization algorithms.
+\newblock \emph{arXiv preprint arXiv:1707.06347}, 2017.
+
+\bibitem[Vinyals et~al.(2019)Vinyals, Babuschkin, Czarnecki, Mathieu, Dudzik,
+  Chung, Choi, Powell, Ewalds, Georgiev, et~al.]{vinyals2019grandmaster}
+Vinyals, O., Babuschkin, I., Czarnecki, W.~M., Mathieu, M., Dudzik, A., Chung,
+  J., Choi, D.~H., Powell, R., Ewalds, T., Georgiev, P., et~al.
+\newblock Grandmaster level in {StarCraft II} using multi-agent reinforcement
+  learning.
+\newblock \emph{Nature}, 575\penalty0 (7782):\penalty0 350--354, 2019.
+
+\end{thebibliography}

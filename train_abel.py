@@ -1055,8 +1055,8 @@ if __name__ == "__main__":
 
     train_group = parser.add_argument_group("Training")
     train_group.add_argument('--Ntrain', type=int, default=10**7, help='Total training timesteps')
-    train_group.add_argument('--n_trials', type=int, default=3, help='Number of trials per agent')
-    train_group.add_argument('--n_workers', type=int, default=3, help='Number of parallel workers')
+    train_group.add_argument('--n_trials', type=int, default=1, help='Number of trials per agent')
+    train_group.add_argument('--n_workers', type=int, default=1, help='Number of parallel workers')
     train_group.add_argument('--base_seed', type=int, default=16, help='Base seed')
     train_group.add_argument('--n_envs', type=int, default=1, help='Number of parallel envs for training (VecEnv)')
     train_group.add_argument('--ent_coef', type=float, default=0.01)
@@ -1067,7 +1067,7 @@ if __name__ == "__main__":
     eval_group.add_argument('--save_root', type=str, default=None, help='Save root directory')
 
     model_group = parser.add_argument_group("Model / Architecture")
-    model_group.add_argument('--agents', nargs='+', default=['ppo-tree'], help='List of agents')
+    model_group.add_argument('--agents', nargs='+', default=['ppo'], help='List of agents')
     model_group.add_argument('--hidden_dim', type=int, default=256, help='Hidden dimension for MLP policy (non-tree)')
     model_group.add_argument('--load_model_path', type=str, default=None, help='Path to load model from')
 
