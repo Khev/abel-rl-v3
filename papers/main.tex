@@ -298,6 +298,8 @@ trig                          & 113 &  81 & 0.717 \\
 
 \textit{Failure modes.} Manual inspection of the failed cases (75 of 387) shows three recurring patterns: (i) trig equations that require an arccos/arcsin step the agent never selects, (ii) log equations whose simplification creates a transcendental that breaks the closed-action set, and (iii) deep polynomials where the agent exceeds the per-episode action budget despite being on a productive path.
 
+\textit{Scaling to the large dataset.} The same per-type evaluation on the ``large'' dataset (1000 test equations of depth $<5$) reveals a uniform drop in every category: linear $0.88 \to 0.60$, quadratic $0.82 \to 0.40$, log $0.75 \to 0.27$, trig $0.72 \to 0.36$, radical $0.92 \to 0.52$. The drop is largest for deep polynomials ($\text{poly-deg4}$: $0.75 \to 0.08$). Going from depth $<4$ to depth $<5$ approximately quadruples the test-set size and adds substantially deeper nesting, so the harder cases are genuinely harder, not just more numerous.
+
 \textit{Generalization to CommonCore.} On the CommonCore (Poesia) benchmark, the same \textsc{ppo-tree-rc} agent reaches $0.955$ greedy test accuracy. The breakdown is sharper: linear equations are solved at $0.98$ and the small subset of rational equations at $1.00$. The remaining failures are essentially edge-case templates that lack a free $x$ in the polynomial decomposition (\emph{degenerate} instances). Accounting for those, accuracy on the solvable subset is $\geq 0.98$.
 
 
