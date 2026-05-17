@@ -16,8 +16,9 @@ The §3 results in `papers/paper.tex` are partly drafted on the *buggy* encoder 
 ### Figures
 - [ ] (L) `learning_curves_closed`: per-dataset × per-agent learning curves with min/max envelope across 3 seeds. Generate via `plot_seeds.py` on the re-run results.
 - [ ] (M) `gnn-comparison`: TreeMLP vs GCN vs GraphSAGE on the small dataset. Need to run `ppo-gnn` and `ppo-sage` agents.
-- [ ] (M) `curiosity-tree-hurts`: TreeMLP with/without curiosity (ICM/RND/etc.) on small dataset, to back the claim that "curiosity worsened learning with TreeMLP."
-- [ ] (S) Representation-learning figure (currently `\ref{}` placeholder, line 264) — embedding visualization (e.g., t-SNE / UMAP of node embeddings after training).
+- [ ] (M) `curiosity-tree-hurts`: TreeMLP with/without curiosity (ICM/RND/etc.) on small dataset, to back the claim that "curiosity worsened learning with TreeMLP." **Currently UNSUPPORTED by any experiment in `data/`** — soften the claim until data lands. First run launched: `ppo-tree-RND × abel_level3 × 500k`.
+- [x] (S) Representation-learning figure — embedding visualization done in two forms: `figures/tsne_l3_rcbuf.png` (single-method) and `figures/embed_l3_panel.png` (2×2: PCA + t-SNE × 2D + 3D, via `plot_embeddings.py`).
+- [ ] (S) Generate the 4-panel embedding figure on abel_level4 and poesia too, for the appendix.
 
 ### Content / analysis
 - [ ] (M) Failure analysis on closed-eq: cluster failure modes from a trained checkpoint, give representative traces. (TODO bullet line 268.)

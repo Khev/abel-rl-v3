@@ -207,7 +207,7 @@ We give more details on TreeMLP in the Appendix. We also show this TreeMLP outpe
 \textbf{Relabel constants.} To improve parameter sharing across structurally identical equations that differ only by symbol names, we introduce a \emph{relabel-constants} action.
 When invoked, it applies a consistent partial renaming (e.g., $\{d\!\mapsto\!a,\, e\!\mapsto\!b,\, \dots\}$) to the current main equation and the working state, mapping arbitrary coefficients onto a compact canonical alphabet $\{a,b,c\}$. The environment stores the induced substitution map on a stack (\texttt{map\_constants\_history}) and uses the mapped equation for all subsequent steps. Upon solving, we \emph{unwind} the stack in reverse, substituting back the original symbols so the final answer is expressed in the user’s variables. This reduces input vocabulary entropy, prevents spurious overfitting to symbol IDs, and makes action terms like ``subtract $b$'' reusable across many instances.
 
-\textbf{Curiosity based rewards}. In previous work~\cite{dabelow2024symbolic}, curiosity-based exploration bonuses (e.g.\ ICM, RND, NGU) were shown to enhance learning on a regular MLP policy. Interestingly, we found curiosity \textit{worsened} learning with the TreeMLP (Appendix), so we do \textit{not} use it in our headline results.
+\textbf{Curiosity based rewards}. In previous work~\cite{dabelow2024symbolic}, curiosity-based exploration bonuses (e.g.\ ICM, RND, NGU) were shown to enhance learning on a regular MLP policy. In preliminary experiments we found these bonuses did not improve, and in several cases degraded, performance when stacked on top of the TreeMLP; we therefore do \textit{not} use them in our headline results (details deferred to a future revision).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \section{Results: Closed equations}
@@ -577,7 +577,7 @@ We summarize the ablation findings; the corresponding learning curves are in Fig
 \begin{itemize}
     \item Replacing dense complexity-delta rewards with sparse outcome-only rewards (and disabling the inverse-frequency curriculum) substantially degrades performance. The main drawback of sparse rewards is \textit{far} longer run times: we had to introduce a 1-second-per-step wall-clock timeout to keep training tractable.
     \item TreeMLP outperforms a vanilla GCN and GraphSAGE on the small dataset (Figure~\ref{gnn-comparison}); the tree-aware aggregation appears necessary, not just helpful.
-    \item Adding curiosity bonuses (ICM, RND, NGU, RIDE, RE3, E3B) on top of TreeMLP \emph{degrades} performance. This contrasts with earlier work~\cite{dabelow2024symbolic}, where curiosity \emph{improved} a vanilla MLP policy. We hypothesize the TreeMLP's structural inductive bias already supplies the exploration signal that curiosity provides for the MLP, so the two are redundant or actively conflicting.
+    \item In preliminary runs, adding curiosity bonuses (ICM, RND, NGU, RIDE, RE3, E3B) on top of TreeMLP did not yield consistent gains and in several cases degraded performance. This contrasts with earlier work~\cite{dabelow2024symbolic}, where curiosity \emph{improved} a vanilla MLP policy. A possible explanation is that the TreeMLP's structural inductive bias already supplies the exploration signal curiosity provides for the MLP, making the two redundant or actively conflicting. We leave a full sweep across curiosity methods $\times$ seeds for the camera-ready version.
 \end{itemize}
 
 \begin{figure}[t]
