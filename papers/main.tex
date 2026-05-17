@@ -78,6 +78,9 @@
 %\usepackage[disable,textsize=tiny]{todonotes}
 \usepackage[textsize=tiny]{todonotes}
 
+% Custom macros for typesetting symbolic-math operators in math mode
+\newcommand{\op}[1]{\operatorname{#1}}
+\newcommand{\SubExpr}{\operatorname{SubExpr}}
 
 % The \icmltitle you define below is probably too long as a header.
 % Therefore, a short form for the running title is supplied here:
@@ -378,7 +381,7 @@ We used Stable Baselines 3's default hyperparameters for A2C and PPO (Table~\ref
 \textbf{Algorithm} & \textbf{Hyperparameters} \\
 \midrule
 PPO & \(learning\_rate=0.0003\), \(n\_steps=2048\), \(batch\_size=64\), \(n\_epochs=10\), \(gamma=0.99\), \(gae\_lambda=0.95\), \(clip\_range=0.2\), \(ent\_coef=0.0\), \(vf\_coef=0.5\), \(max\_grad\_norm=0.5\), \(normalize\_advantage=True\), \(device='auto'\) \\
-PPO-tree & \(learning\_rate=0.0007\), \(n\_steps=5\), \(gamma=0.99\)
+PPO-tree & \(learning\_rate=0.0007\), \(n\_steps=5\), \(gamma=0.99\) \\
 \bottomrule
 \end{tabular}
 \caption{Default hyperparameters for A2C and PPO from Stable Baselines 3.}
@@ -551,7 +554,7 @@ All tensors are moved to CUDA when available; no MPS is used.
 \begin{itemize}
     \item Figure~\ref{ablations} shows the ablation study. Turning off the dense rewards and the curriculum degrades performance. The main drawack of sprase rewards is \textit{far} longer run times. We had to include a max timeout of 1s per step in order to get the results to finish.  
     \item Figure~\ref{gnn-comparison} shows the TreeMLP outperforms regular GNN and GraphSage; the Tree is necessary
-    \item Finally, figure X shows adding curiosity degrades performance. This constrasts with earlier work, where regular ppo (non-tree) improves the performance \cite{}.
+    \item Finally, Figure~\ref{ablations} shows adding curiosity degrades performance. This contrasts with earlier work~\cite{dabelow2024symbolic}, where regular PPO (non-tree) improves performance when augmented with curiosity.
 \end{itemize}
 
 \begin{figure}[t]
