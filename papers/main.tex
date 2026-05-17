@@ -148,7 +148,7 @@ We show that RL agents combined with a graph-based policy (TreeMLP), a dynamic p
 \section{Problem Formulation}
 Our Markov Decision Process (MDP) formulation is
 
-\textbf{States}: equations like $ax+b =0$ or $cx+d = -x/b$. We vectorize these using preorder traversal over the equations' expression tree (Figure~\ref{trees}) and pad to a maximum length $L=50$ (suitable length for the equation sizes we here consider). Then we map operations and symbols to integers \(\{\text{add}:1, \text{sub}:2, \text{mul}:3, \ldots, x:5, a:6, \ldots\}\). We encode both the lhs and rhs of the equation in this manner and then concatenate. An example embedding is $x+a \rightarrow [add, x, a] \rightarrow [1, 5, 8, PAD, \dots]$
+\textbf{States}: equations like $ax+b=0$ or $cx+d = -x/b$. We vectorize these using preorder traversal over the equation's expression tree (Figure~\ref{trees}) and pad to a maximum length $L=50$ (long enough for the equation sizes we consider). Operations and symbols are mapped to integers, e.g.\ $\{\text{add}\!:\!1,\ \text{sub}\!:\!2,\ \text{mul}\!:\!3,\ \ldots,\ x\!:\!5,\ a\!:\!6,\ b\!:\!7,\ \ldots\}$. We encode both the lhs and rhs of the equation in this way and concatenate. For example, $x+a \to [\text{add}, x, a] \to [1, 5, 6, \text{PAD}, \dots]$.
 \begin{figure}
     \centering
     \includegraphics[width=\linewidth]{tree.png} % fill the wrap box
