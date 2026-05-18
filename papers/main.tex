@@ -266,12 +266,12 @@ Solved: x = (b + de)/(-a - c*e)
 \end{verbatim}
 \end{enumerate}
 
-\textit{Per-type accuracy.} The ``small'' dataset contains a heterogeneous mix of equation types. Bucketing the test set by structural class and re-evaluating the trained \textsc{ppo-tree-rc-buf} agent reveals a clear pattern (Table~\ref{tab:per_type}): linear and radical equations are nearly fully solved ($\geq 0.88$), polynomial equations of degree $2$--$4$ sit in the $0.75$--$0.82$ range, while transcendental forms—particularly trigonometric and logarithmic—are the hardest. The trigonometric bucket (113 equations, $72\%$ accuracy) accounts for most of the remaining failures.
+\textit{Per-type accuracy.} The ``small'' dataset contains a heterogeneous mix of equation types. Bucketing the test set by structural class and re-evaluating the trained \textsc{ppo-tree-rc-buf} agent reveals a clear pattern (Table~\ref{tab:per_type}): linear and radical equations are nearly fully solved ($\geq 0.88$), polynomial equations of degree $2$--$4$ sit in the $0.75$--$0.82$ range, while transcendental forms—particularly trigonometric and logarithmic—are the hardest. The trigonometric bucket (113 equations, $72\%$ accuracy) accounts for most of the remaining failures. Note that the polynomial buckets contain only ``depressed'' forms (e.g.~$ax^2+c$, $x^4 + c$) that arise naturally from recursive action application; \emph{true} open polynomials with a linear cross-term ($ax^2+bx+c$) are not in this dataset and are instead studied in §\ref{sec:open}.
 
 \begin{table}[h!]
 \centering
 \footnotesize
-\caption{Greedy test accuracy of \textsc{ppo-tree-rc-buf} on the small dataset, broken down by equation class.}
+\caption{Greedy test accuracy of \textsc{ppo-tree-rc-buf} on the small dataset, broken down by equation class. ``poly-deg$k$'' includes only the depressed forms reachable by the closed-equation action set (e.g.\ $ax^2 + c$, $x^4 + c$); equations with a linear cross-term are out of this dataset.}
 \label{tab:per_type}
 \begin{tabular}{l c c c}
 \toprule
@@ -308,6 +308,7 @@ trig                          & 113 &  81 & 0.717 \\
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \section{Results: Open equations}
+\label{sec:open}
 Now we consider the harder class of \emph{open equations}. We train a separate change–of–variables policy $\pi_{\text{cov}}$ which, given an input equation, proposes a substitution $x \mapsto \phi(x)$ that simplifies the instance into a canonical, easier-to-solve form. We consider four basic templates
 \begin{align}
     & a x^2 + b x + c = 0, & x &\to x - b/(2a) \\
