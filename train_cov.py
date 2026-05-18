@@ -344,7 +344,13 @@ class SuccessBuffer:
             idx = random.sample(range(n), k=batch_size)
         else:
             idx = np.random.randint(0, n, size=batch_size).tolist()
-        obs_b = np.stack([self.obs[i] for i in idx], axis=0).astype(np.float32)
+        sample0 = self.obs[idx[0]]
+        if isinstance(sample0, dict):
+            # graph state_rep: stack per-key into dict of arrays
+            obs_b = {k: np.stack([np.asarray(self.obs[i][k]) for i in idx], axis=0)
+                     for k in sample0.keys()}
+        else:
+            obs_b = np.stack([self.obs[i] for i in idx], axis=0).astype(np.float32)
         act_b = np.array([self.act[i] for i in idx], dtype=np.int64)
         return obs_b, act_b
 
@@ -409,7 +415,11 @@ class SuccessReplayCallback(BaseCallback):
 
     def _supervised_update(self, obs_batch, act_batch):
         device = self.model.policy.device
-        obs_t = torch.as_tensor(obs_batch, device=device)
+        # Handle dict obs (graph state_rep) vs array obs (integer_1d)
+        if isinstance(obs_batch, dict):
+            obs_t = {k: torch.as_tensor(v, device=device) for k, v in obs_batch.items()}
+        else:
+            obs_t = torch.as_tensor(obs_batch, device=device)
         act_t = torch.as_tensor(act_batch, device=device)
         self.model.policy.optimizer.zero_grad(set_to_none=True)
         dist = self.model.policy.get_distribution(obs_t)
@@ -432,7 +442,9 @@ class SuccessReplayCallback(BaseCallback):
         bc_losses, ents = [], []
         for _ in range(total_iters):
             obs_b, act_b = self.buf.sample(self.batch_size)
-            if obs_b.size == 0:
+            empty = (isinstance(obs_b, dict) and len(obs_b) == 0) or \
+                    (hasattr(obs_b, "size") and obs_b.size == 0)
+            if empty:
                 break
             lbc, ent = self._supervised_update(obs_b, act_b)
             bc_losses.append(lbc)
@@ -474,7 +486,11 @@ class SuccessReplayCallbackOld(BaseCallback):
 
     def _supervised_update(self, obs_batch, act_batch):
         device = self.model.policy.device
-        obs_t = torch.as_tensor(obs_batch, device=device)
+        # Handle dict obs (graph state_rep) vs array obs (integer_1d)
+        if isinstance(obs_batch, dict):
+            obs_t = {k: torch.as_tensor(v, device=device) for k, v in obs_batch.items()}
+        else:
+            obs_t = torch.as_tensor(obs_batch, device=device)
         act_t = torch.as_tensor(act_batch, device=device)
         self.model.policy.optimizer.zero_grad(set_to_none=True)
         dist = self.model.policy.get_distribution(obs_t)
