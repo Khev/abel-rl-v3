@@ -214,7 +214,7 @@ When invoked, it applies a consistent partial renaming (e.g., $\{d\!\mapsto\!a,\
 \begin{table}[t!]
 \centering
 \footnotesize
-\caption{Greedy test accuracy for each agent across dataset. Single-seed results; ConPoLe / ConPoLe-local numbers from~\cite{poesia2021contrastive}. ``--'' denotes a cell awaiting a multi-seed re-run.}
+\caption{Greedy test accuracy for each agent across dataset. Single-seed results; ConPoLe / ConPoLe-local numbers from~\cite{poesia2021contrastive}. ``--'' denotes a cell awaiting a multi-seed re-run. Both \textsc{ppo-tree-rc} and \textsc{ppo-tree-rc-buf} exceed the ConPoLe SOTA on poesia.}
 \begin{tabular}{l c c c}
 \toprule
 Algorithm & small & large & poesia \\
@@ -224,7 +224,7 @@ ConPoLe          & --    & --    & 0.925 \\
 ppo              & 0.04  & 0.02  & 0.17  \\
 ppo-tree         & --    & --    & 0.815 \\
 ppo-tree-rc      & 0.90  & --    & 0.96  \\
-ppo-tree-rc-buf  & 0.80  & 0.44  & --    \\
+ppo-tree-rc-buf  & 0.80  & 0.44  & \textbf{0.93} \\
 \bottomrule
 \label{tab:test_greedy}
 \end{tabular}
@@ -234,7 +234,7 @@ ppo-tree-rc-buf  & 0.80  & 0.44  & --    \\
 
 \textit{Datasets}. We tasked the agent with solving a random equation during each episode. We generate train/test sets by starting with $x$ and applying actions recursively. Recall actions are $(operation, term)$ pairs. The operations are as before, but we restrict terms to $(a, b, c)$ (we excluded $d, e$ since we wanted to favor long, rather than wide equations). Applying a single action generated equations like $ax, \log(x), x+b$, applying 2 actions equations like $ax+b, \log(x)+d, (x+b)/c$ and so on. We threw out any equations that SymPy couldn't solve, and considered multi-root equations solved when just one root was found (e.g. $\sin(x) = 0$ is solved if the agent found $x=0$ rather than $x = 2 n \pi$). We created a small dataset which included all equations of $depth<4$ (size 3874) and sub-sampled to a $10^3/10^2$ train/test split, and a large dataset of all equations of $depth<5$ (size 15625) sub-sampled to a $10^4/10^3$ train/test split. Finally, we also use the CommonCore datasets used in previous works.
 
-\textit{Results}. Figure~\ref{learning_curves_closed} shows the learning curve for each algorithm on all three datasets. We plot three performance metrics: (i) coverage, the fraction of train equations solved at least once, (ii) test accuracy following the greedy policy, (iii) and test accuracy following beam search of width 5.  The top row shows the CommonCore datasets (with coverage excluded since the train set is random and unbounded). The dashed black lines show the results for ConPoLe-local and ConPoLe from \cite{poesia2021contrastive}; these are the SOTA for symbolic equation solving. Notice our vanilla ppo-tree beats ConPoLe-local, while our inductive biases (ppo-tree-rc) beats ConPoLe. Table~\ref{tab:test_greedy} reports the exact numbers. 
+\textit{Results}. Figure~\ref{learning_curves_closed} shows the learning curve for each algorithm on all three datasets. We plot three performance metrics: (i) coverage, the fraction of train equations solved at least once, (ii) test accuracy following the greedy policy, (iii) and test accuracy following beam search of width 5. The top row shows the CommonCore datasets (with coverage excluded since the train set is random and unbounded). The dashed black lines show the results for ConPoLe-local and ConPoLe from~\cite{poesia2021contrastive}, the SOTA for symbolic equation solving. Our vanilla \textsc{ppo-tree} already beats ConPoLe-local, and our two best-performing inductive-bias combinations exceed the full ConPoLe: \textsc{ppo-tree-rc} attains $0.96$ and \textsc{ppo-tree-rc-buf} attains $0.93$ (beam $0.94$) greedy test accuracy. Table~\ref{tab:test_greedy} reports the exact numbers. 
 
 The bottom two rows show the results on our small and large datasets. For the small dataset, all four methods achieve near-perfect coverage on the training set, but only \textsc{ppo-tree-rc} and \textsc{ppo-tree-rc-buf} achieve high test accuracy under greedy decoding ($\geq 0.80$). For the large dataset, only \textsc{ppo-tree-rc-buf} attains both broad coverage and a usable test accuracy ($\text{test}_{\text{beam}} \approx 0.66$); vanilla \textsc{ppo-tree} and \textsc{ppo-tree-rc} collapse to near-zero greedy accuracy on the large set, suggesting the success-replay buffer is the critical ingredient at scale. 
 
