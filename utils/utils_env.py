@@ -1374,15 +1374,16 @@ def load_train_test_equations(dirn, level, generalization="shallow"):
     if not os.path.exists(train_eqns_path) or not os.path.exists(test_eqns_path):
         raise FileNotFoundError(f"Train or test equation file not found for level {level} in {dirn}")
 
-    with open(test_eqns_path, "r") as f:
-        test_eqns = [sympify(line.strip()) for line in f.readlines()]
+    def _read_eqns(path):
+        with open(path, "r") as f:
+            return [
+                sympify(line.strip())
+                for line in f.readlines()
+                if line.strip() and not line.lstrip().startswith("#")
+            ]
 
-    # Read and sympify each equation
-    with open(train_eqns_path, "r") as f:
-        train_eqns = [sympify(line.strip()) for line in f.readlines()]
-
-    with open(test_eqns_path, "r") as f:
-        test_eqns = [sympify(line.strip()) for line in f.readlines()]
+    train_eqns = _read_eqns(train_eqns_path)
+    test_eqns = _read_eqns(test_eqns_path)
 
     return train_eqns, test_eqns
 
