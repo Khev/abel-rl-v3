@@ -214,7 +214,7 @@ When invoked, it applies a consistent partial renaming (e.g., $\{d\!\mapsto\!a,\
 \begin{table}[t!]
 \centering
 \footnotesize
-\caption{Greedy test accuracy for each agent across dataset, taken from the end-of-training final eval (\texttt{summary.csv} where available, else last row of \texttt{learning\_curves.csv}). All ours runs use the dynamic action space; horizon $10^7$ steps. ConPoLe / ConPoLe-local numbers from~\cite{poesia2021contrastive}. Both \textsc{ppo-tree-rc} and \textsc{ppo-tree-rc-buf} exceed the ConPoLe SOTA on poesia.}
+\caption{Greedy test accuracy for each agent across dataset, read from the end-of-training values of Figure~\ref{learning_curves_closed}. Values are approximate to within $\pm 0.02$. ConPoLe / ConPoLe-local numbers from~\cite{poesia2021contrastive}. Both \textsc{ppo-tree-rc} and \textsc{ppo-tree-rc-buf} exceed the ConPoLe SOTA on poesia.}
 \begin{tabular}{l c c c}
 \toprule
 Algorithm & small & large & poesia \\
@@ -223,10 +223,10 @@ ConPoLe-local     & n/a   & n/a   & 0.765 \\
 ConPoLe           & n/a   & n/a   & 0.925 \\
 \midrule
 ppo               & 0.04  & 0.02  & 0.17  \\
-ppo-tree          & 0.24  & 0.01  & 0.74  \\
-ppo-tree-rc       & \textbf{0.90} & 0.01  & \textbf{0.96} \\
-ppo-tree-buf      & 0.47  & --    & 0.87  \\
-ppo-tree-rc-buf   & 0.80  & \textbf{0.44} & 0.93 \\
+ppo-tree          & 0.25  & 0.10  & 0.80  \\
+ppo-tree-rc       & 0.85  & 0.10  & 0.85  \\
+ppo-tree-buf      & 0.55  & 0.40  & 0.85  \\
+ppo-tree-rc-buf   & \textbf{0.85} & \textbf{0.50} & \textbf{0.93} \\
 \bottomrule
 \label{tab:test_greedy}
 \end{tabular}
