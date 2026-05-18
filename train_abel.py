@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
 import os
+import sys
+# Disable Python 3.11+ int-to-string conversion limit. SymPy can produce
+# huge integers during simplification (e.g. via heuristic GCD), and printing
+# them (e.g., in info["main_eqn"]=str(...)) raises ValueError under the cap.
+try:
+    sys.set_int_max_str_digits(0)
+except AttributeError:
+    pass
 import argparse
 import json
 import time
@@ -340,6 +348,7 @@ def make_env(
     use_action_mask: bool = False,
     use_success_replay: bool = False,
     use_cov: bool = False,
+    anti_loop_penalty: float = 0.0,
 ):
     #state_rep = 'graph_integer_1d' if 'tree' in agent else 'integer_1d'
     use_graph = any(tok in agent.split('-') for tok in ('tree','gnn','sage'))
@@ -358,6 +367,7 @@ def make_env(
                 use_curriculum=use_curriculum,
                 use_success_replay=use_success_replay,
                 use_cov=use_cov,
+                anti_loop_penalty=anti_loop_penalty,
             )
         else:
             EnvCls = multiEqn
@@ -393,6 +403,7 @@ def make_train_vec_env(
     use_action_mask: bool,
     use_success_replay: bool,
     use_cov: bool = False,
+    anti_loop_penalty: float = 0.0,
 ):
     """Create a vectorized environment for training."""
     vec_cls = SubprocVecEnv if n_envs > 1 else DummyVecEnv
@@ -406,6 +417,7 @@ def make_train_vec_env(
             use_action_mask=use_action_mask,
             use_success_replay=use_success_replay,
             use_cov=use_cov,
+            anti_loop_penalty=anti_loop_penalty,
         ),
         n_envs=n_envs,
         seed=seed,
@@ -802,7 +814,7 @@ def beam_accuracy(model, env, equations, *, beam_width=5, topk_per_node=5,
 # Logging callback
 # ==========================
 class TrainingLogger(BaseCallback):
-    def __init__(self, algo_name: str, train_env, eval_env, eval_interval: int, log_interval: int, save_dir: str, verbose=1):
+    def __init__(self, algo_name: str, train_env, eval_env, eval_interval: int, log_interval: int, save_dir: str, verbose=1, early_stop_patience: int = 0):
         super().__init__(verbose)
         self.algo_name     = algo_name
         self.train_env     = train_env
@@ -826,6 +838,12 @@ class TrainingLogger(BaseCallback):
         self.test_acc: List[float] = []
         self.test_beam: List[float] = []
         self.test_at10: List[float] = []
+        # Early-stopping + best checkpoint on test_beam
+        self.early_stop_patience = int(early_stop_patience)
+        self.best_test_beam: float = -1.0
+        self.best_step: Optional[int] = None
+        self.no_improve_count: int = 0
+        self.stopped_early: bool = False
         os.makedirs(self.save_dir, exist_ok=True)
 
     def _log_eval(self, step: int):
@@ -843,10 +861,19 @@ class TrainingLogger(BaseCallback):
         self.test_acc.append(tst if tst is not None else np.nan)
         self.test_beam.append(tbeam if tbeam is not None else np.nan)
         self.test_at10.append(t10 if t10 is not None else np.nan)
+        # Track best test_beam, save best.zip on improvement
+        if tbeam is not None and tbeam > self.best_test_beam:
+            self.best_test_beam = float(tbeam)
+            self.best_step = step
+            self.no_improve_count = 0
+            self.model.save(os.path.join(self.ckpt_dir, "best.zip"))
+        else:
+            self.no_improve_count += 1
         tst_s   = f"{tst:.2f}"   if tst   is not None else "NA"
         tbeam_s = f"{tbeam:.2f}" if tbeam is not None else "NA"
         t10_s   = f"{t10:.2f}"   if t10   is not None else "NA"
-        timed_print(f"[{self.algo_name}] t={step}: coverage={cov:.3f} | test_(greedy,beam,@10) =({tst_s}, {tbeam_s}, {t10_s})")
+        best_s  = f"{self.best_test_beam:.2f}@{self.best_step}" if self.best_step is not None else "NA"
+        timed_print(f"[{self.algo_name}] t={step}: coverage={cov:.3f} | test_(greedy,beam,@10) =({tst_s}, {tbeam_s}, {t10_s}) | best_beam={best_s} | patience={self.no_improve_count}/{self.early_stop_patience}")
         pd.DataFrame({
             "step": self.log_steps,
             "coverage": self.coverage,
@@ -882,6 +909,10 @@ class TrainingLogger(BaseCallback):
         if self.eval_interval and step % self.eval_interval == 0:
             self._log_eval(step)
             self._save_ckpt(step)   # <-- add this line
+            if self.early_stop_patience > 0 and self.no_improve_count >= self.early_stop_patience:
+                self.stopped_early = True
+                timed_print(f"[{self.algo_name}] Early stop at step {step}: test_beam stopped improving for {self.no_improve_count} evals (best={self.best_test_beam:.3f}@{self.best_step})")
+                return False
         return True
 
     def _on_training_end(self) -> None:
@@ -924,6 +955,8 @@ def run_trial(
     sr_capacity: int = 20000,
     ent_coef = 0.01,
     use_cov: bool = False,
+    early_stop_patience: int = 0,
+    anti_loop_penalty: float = 0.0,
 ):
     train_env = make_train_vec_env(
         n_envs=n_envs,
@@ -938,6 +971,7 @@ def run_trial(
         use_action_mask=action_space == 'dynamic',
         use_success_replay=use_success_replay,
         use_cov=use_cov,
+        anti_loop_penalty=anti_loop_penalty,
     )
     eval_env  = make_env(
         env_name, agent, gen, seed=seed + 777,
@@ -959,7 +993,8 @@ def run_trial(
         eval_env=eval_env,
         eval_interval=eval_interval,
         log_interval=log_interval,
-        save_dir=run_dir
+        save_dir=run_dir,
+        early_stop_patience=early_stop_patience,
     )
     #cb_list: List[BaseCallback] = [cb_main, ProgressBarCallback()]
     cb_list: List[BaseCallback] = [cb_main]
@@ -1088,6 +1123,8 @@ if __name__ == "__main__":
     train_group.add_argument('--base_seed', type=int, default=16, help='Base seed')
     train_group.add_argument('--n_envs', type=int, default=1, help='Number of parallel envs for training (VecEnv)')
     train_group.add_argument('--ent_coef', type=float, default=0.01)
+    train_group.add_argument('--early_stop_patience', type=int, default=0, help='Stop trial after N evals with no test_beam improvement (0 = disabled). Also enables best.zip checkpointing on every improvement.')
+    train_group.add_argument('--anti_loop_penalty', type=float, default=0.0, help='Reward penalty alpha when current action == previous action (targets REL-loop failure mode). 0 = disabled.')
 
     eval_group = parser.add_argument_group("Eval / Logging")
     eval_group.add_argument('--eval_interval', type=int, default=0, help='Evaluation interval (steps)')
@@ -1172,7 +1209,7 @@ if __name__ == "__main__":
                 args.sparse_rewards, args.use_relabel_constants, args.use_curriculum, tree_kwargs,
                 n_envs, args.action_space, args.use_success_replay, args.sr_mix_ratio,
                 args.sr_batch_size, args.sr_iters_per_rollout, args.sr_capacity, args.ent_coef,
-                args.use_cov,
+                args.use_cov, args.early_stop_patience, args.anti_loop_penalty,
             ))
 
     rows, run_dirs = run_parallel(jobs, n_workers=n_workers, timeout_per_job=TRIAL_WALLCLOCK_LIMIT)

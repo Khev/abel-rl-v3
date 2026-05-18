@@ -13,6 +13,7 @@ from operator import add, sub, mul, truediv
 from utils.utils_env import *
 from utils.utils_custom_functions import *
 from collections import defaultdict, deque
+from typing import Optional
 #import faiss  # pip install faiss-cpu
 
 import signal
@@ -125,12 +126,12 @@ class multiEqn(Env):
 
     metadata = {"render_modes": ["human"]}
 
-    def __init__(self, 
-                 state_rep='integer_1d', 
-                 normalize_rewards=True, 
+    def __init__(self,
+                 state_rep='integer_1d',
+                 normalize_rewards=True,
                  verbose=False,
-                 cache=False, 
-                 level=4, 
+                 cache=False,
+                 level=4,
                  gen='abel_level_2',
                  sparse_rewards=False,
                  use_relabel_constants=False,
@@ -143,6 +144,7 @@ class multiEqn(Env):
                  max_cov_apps = 1,
                  step_timeout: float = 0.5,
                  train_eqns=None,
+                 anti_loop_penalty: float = 0.0,
                  ) -> None:
         super().__init__()
 
@@ -154,6 +156,8 @@ class multiEqn(Env):
         self.current_steps = 0
         self.gen = gen
         self.step_timeout = step_timeout
+        self.anti_loop_penalty = float(anti_loop_penalty)
+        self.last_action: Optional[int] = None
 
         # Rewards
         self.reward_solved = +100
@@ -389,6 +393,12 @@ class multiEqn(Env):
 
         reward = self.find_reward(lhs_old, rhs_old, lhs_new, rhs_new, is_valid_eqn, is_solved)
 
+        # Anti-loop penalty: subtract α if this action repeats the previous one.
+        # Targets the "REL REL REL..." failure mode (see diagnose_action_traces.py).
+        if self.anti_loop_penalty > 0 and self.last_action is not None and action_index == self.last_action:
+            reward -= self.anti_loop_penalty
+        self.last_action = action_index
+
         too_many_steps = (self.current_steps >= self.max_steps)
         terminated = bool(is_solved or too_many_steps or not is_valid_eqn)
         truncated = False
@@ -406,7 +416,12 @@ class multiEqn(Env):
                 rhs_unw = rhs_new
                 for inv in reversed(self.cov_inv):
                     if inv is not None:
-                        rhs_unw = simplify(inv.subs(self.solve_var, rhs_unw))
+                        substituted = inv.subs(self.solve_var, rhs_unw)
+                        try:
+                            rhs_unw = simplify(substituted)
+                        except Exception:
+                            # SymPy heuristic-GCD/poly failures: fall back to unsimplified.
+                            rhs_unw = substituted
                 lhs_new, rhs_new = self.solve_var, rhs_unw
                 if self.main_eqn_original_cov is not None:
                     self.main_eqn = self.main_eqn_original_cov
@@ -553,6 +568,11 @@ class multiEqn(Env):
         except TimeoutException:
             #logger.warning(f"_apply_cov timed out after {timeout_seconds} seconds")
             return lhs, rhs
+        except Exception as e:
+            # SymPy can raise HeuristicGCDFailed, PolynomialError, ZeroDivisionError,
+            # CoercionFailed, etc. inside simplify/cancel during weird substitutions.
+            # Treat any such failure as a no-op CoV so the worker survives.
+            return lhs, rhs
         finally:
             signal.alarm(0)  # Disable the alarm
 
@@ -585,14 +605,19 @@ class multiEqn(Env):
         sol = self.main_eqn.subs(v, rhs)
         if sol == 0 or getattr(sol, 'is_zero', False):
             return True
-        if getattr(sol, 'expand', None) and sol.expand() == 0:
-            return True
-        if powdenest(sol, force=True) == 0:
-            return True
-        if ratsimp(sol) == 0:
-            return True
-        if simplify(sol) == 0:
-            return True
+        # Each canonicalizer may raise (HeuristicGCDFailed, PolynomialError, etc.).
+        # Try them independently so a single failure doesn't reject a true solution.
+        for canon in (
+            lambda s: s.expand() if getattr(s, 'expand', None) else s,
+            lambda s: powdenest(s, force=True),
+            lambda s: ratsimp(s),
+            lambda s: simplify(s),
+        ):
+            try:
+                if canon(sol) == 0:
+                    return True
+            except Exception:
+                continue
         return False
 
     # ──────────────────────────────────────────────────────────────────────────
@@ -652,6 +677,7 @@ class multiEqn(Env):
         self.main_eqn_original = None
 
         self.current_steps = 0
+        self.last_action = None
         self.lhs, self.rhs = self.main_eqn, 0
         obs, _ = self.to_vec(self.lhs, self.rhs)
         self.state = obs
