@@ -564,7 +564,20 @@ class multiEqn(Env):
             lhs_s = sympify(lhs)
             rhs_s = sympify(rhs)
             main_s = sympify(self.main_eqn)
-            sub_expr = self.pi_cov(main_s)
+            # Try the CURRENT transformed equation first (sp.expand(lhs - rhs)).
+            # This is critical for nested-CoV recipes: e.g. for exp eqns, the
+            # agent applies CoV (x->log(x)) and then mul-by-x to get a quadratic;
+            # pi_cov on main_eqn (which is the rational form a*x + b/x + c) would
+            # return None, but pi_cov on the expanded current form (a*x^2 + c*x + b)
+            # correctly detects the quadratic and returns the depression substitution.
+            try:
+                current_form = simplify(sympify(lhs_s - rhs_s))
+                sub_expr = self.pi_cov(current_form)
+            except Exception:
+                sub_expr = None
+            if sub_expr is None:
+                # Fallback to main_eqn for the standard case (first-CoV on original)
+                sub_expr = self.pi_cov(main_s)
             if sub_expr is None:
                 #logger.warning("pi_cov returned None")
                 return lhs, rhs
