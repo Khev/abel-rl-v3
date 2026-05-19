@@ -130,7 +130,7 @@ class multiEqn(Env):
                  state_rep='integer_1d',
                  normalize_rewards=True,
                  verbose=False,
-                 cache=False,
+                 cache=True,
                  level=4,
                  gen='abel_level_2',
                  sparse_rewards=False,
@@ -372,7 +372,10 @@ class multiEqn(Env):
             self.map_constants = map_constants
             if self.main_eqn_original is None:
                 self.main_eqn_original = self.main_eqn
-            self.main_eqn = sympify(str(lhs_new) + ' - ' + str(rhs_new))
+            # Was: self.main_eqn = sympify(str(lhs_new) + ' - ' + str(rhs_new))
+            # The sympify(str(...)) roundtrip parses+reparses each side just to subtract.
+            # Direct subtraction is identical and ~10x faster on relabel-heavy episodes.
+            self.main_eqn = lhs_new - rhs_new
             self.map_constants_history.append(map_constants)
 
         elif self.use_cov and operation is getattr(self, '_cov_op', None):

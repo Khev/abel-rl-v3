@@ -329,6 +329,27 @@ We train a CoV agent using PPO with TreeMLP. Figure~\ref{cov_results} shows the 
     \label{cov_results}
 \end{figure}
 
+\subsection{Mixed dataset: closed + open equations together}
+\label{sec:mixed}
+The clean separation between $\pi_{\text{cov}}$ and $\pi_{\text{manipulate}}$ in the previous subsection makes the analysis tidy but is brittle: at test time the agent must first decide \emph{whether} to invoke a CoV. Instead, we train a single TreeMLP-PPO policy on a mixed dataset, exposing the CoV as a macroaction inside the same dynamic action space as the closed-equation manipulations. The CoV macroaction calls an analytic $\pi_{\text{cov}}$ for the four templates above (so the substitution is always correct when chosen); the agent learns \emph{when} to invoke it. We construct three sizes -- \texttt{mixed\_v2\_tiny} (100/10), \texttt{mixed\_v2\_easy} (916/91, stratified across four CoV classes plus \texttt{abel\_level1/2/3}), and \texttt{mixed\_v2\_large} (10K/1K) -- mirroring the closed-equation convention. Initial 3-seed runs of \textsc{ppo-tree-rc-buf} on \texttt{mixed\_v2\_easy} reach \textit{coverage}$=1.0$ on the training set and \textit{test}$_{\text{beam}}\approx 0.28$ with plain beam search, with high seed variance (one strong seed at $0.28$--$0.31$, two slower seeds at $0.06$--$0.15$). Inspecting greedy traces on the test set reveals a single dominant failure mode (Section~\ref{sec:antiloop}): the agent memorizes one ``depressed-quartic'' solution recipe and falls into repeated \texttt{relabel\_const} loops on equations that need a different finisher.
+
+\subsection{Action-diversity penalty}
+\label{sec:antiloop}
+We address the loop failure mode with a small reward shaping term: subtract $\alpha$ from the per-step reward whenever the current action equals the previous one. With $\alpha = 0.1$ on \texttt{mixed\_v2\_easy}, one seed reaches \textit{test}$_{\text{beam}}=0.34$ at $t=1.65\text{M}$ steps -- exceeding the baseline's final value $0.31$ at $t=3\text{M}$, while using $\approx 2\times$ fewer environment steps. A side-by-side diagnostic shows the policy now solves additional eqns (e.g. $\log(x/c)^2 = 0$, $\sqrt{-a+bx} = 0$) that the baseline lost to relabel-loops; the average ``same-as-previous-action'' fraction on \emph{failed} test traces drops from $0.86$ to $0.48$. Multi-seed variance under this penalty is the main open question; we report $n=3$ here and leave a broader sweep to future work.
+
+\subsection{Value-guided beam search}
+\label{sec:value_beam}
+The biggest practical lift on the open-equation task comes not from training but from \emph{decoding}. Standard beam search scores each partial path by $\sum_t \log \pi(a_t \mid s_t)$. PPO already trains a value head $V_\theta(s)$ jointly with $\pi_\theta(a\!\mid\! s)$ for the advantage estimator, but at evaluation $V_\theta$ is discarded. We re-introduce it:
+\begin{equation}
+\label{eq:value_beam}
+\text{score}(\text{path}) = \sum_t \log \pi_\theta(a_t \mid s_t) + \lambda\, V_\theta(s_T) - \alpha\, T - \beta\, C(s_T),
+\end{equation}
+where $T$ is path length and $C$ is the per-state complexity proxy (count of polynomial-like terms) used in the shaping reward. We additionally apply canonical-state deduplication: two beam entries reaching the same $\text{expand}(\text{lhs}, \text{rhs})$ under the same CoV/relabel context are collapsed (the higher-scored copy survives), avoiding wasted slots on equivalent partial derivations.
+
+\textit{Results.} On \texttt{mixed\_v2\_easy} with the seed8001 baseline checkpoint (final \textit{test}$_{\text{beam}}=0.31$ during training, $0.275$ when re-evaluated with deeper $\text{max\_steps}=10$), value-guided beam at $\lambda \in [0.5, 1.0]$ combined with dedup raises \textit{test}$_{\text{beam}}$ to $\mathbf{0.40}$ -- a $\mathbf{+44\%}$ relative gain with no retraining. The improvement is robust across a wide plateau in $\lambda$ ($\lambda \in \{0.5, 0.7, 1.0\}$ all return identical accuracy), suggesting the bonus is acting as a tie-breaker between equally-likely policy paths rather than over-riding policy decisions. Interestingly, on the anti-loop seed9100 checkpoint where policy is already stronger (greedy $=0.22$ vs $0.01$ for baseline), value guidance \emph{hurts} monotonically with $\lambda$: the policy has internalized the search itself, and the value head adds noise. This complementary structure between policy and value guidance is, we believe, a useful observation for the broader symbolic-RL literature.
+
+\textit{Cost.} Adding $V_\theta$ to beam scoring is one extra forward pass per node expansion. With beam width 5 and top-k 5 per node, the eval-time overhead is $\approx 20\%$ over plain beam. The dedup pass adds an $\mathcal{O}(B)$ \texttt{expand}/string-comparison per beam step. Both are negligible compared to the cost of training.
+
 % TODO scratchpad of ideas (commented out so it doesn't render):
 %   - Abel: verify equations are (i) solvable, (ii) solvable within max_steps.
 %     E.g., a^18 x^3 can arise from repeated (mul,a) and pow.

@@ -386,33 +386,32 @@ class TreeMLPExtractor(BaseFeaturesExtractor):
         dst = edge_index[:, 1, :].long()      # [B, E]
         batch_idx = torch.arange(B, device=self.device).unsqueeze(1).expand(B, E).contiguous()
 
+        # === Hoisted out of K-loop ===
+        # All these indices depend only on edge_index + edge_mask, not on h,
+        # so they're constant across the K message-passing iterations.
+        mask_flat  = edge_mask.reshape(-1).bool()            # [B*E]
+        src_flat   = src.reshape(-1)[mask_flat]              # [num_edges]
+        dst_flat   = dst.reshape(-1)[mask_flat]              # [num_edges]
+        batch_flat = batch_idx.reshape(-1)[mask_flat]        # [num_edges]
+        src_idx    = batch_flat * N + src_flat               # [num_edges]
+        dst_idx    = batch_flat * N + dst_flat               # [num_edges]
+        node_mask_f = node_mask.unsqueeze(-1).float()        # [B, N, 1]
+        # Preallocate aggregation buffer (reused via zero_() inside the loop)
+        agg_flat   = torch.zeros(B * N, self.hidden_dim, device=h.device, dtype=h.dtype)
+        # =============================
+
         for _ in range(self.K):
-            # Flatten safely (handles non-contiguous tensors)
-            src_flat   = src.reshape(-1)                 # [B*E]
-            dst_flat   = dst.reshape(-1)                 # [B*E]
-            batch_flat = batch_idx.reshape(-1)           # [B*E]
-            mask_flat  = edge_mask.reshape(-1).bool()    # [B*E]
-
-            # Filter valid edges
-            src_flat   = src_flat[mask_flat]
-            dst_flat   = dst_flat[mask_flat]
-            batch_flat = batch_flat[mask_flat]
-
-            # Linearize node indices: (b, i) -> b*N + i
-            src_idx = batch_flat * N + src_flat
-            dst_idx = batch_flat * N + dst_flat
-
             # Gather messages and scatter-add into destinations
             h_flat   = h.reshape(B * N, self.hidden_dim)     # [B*N, H]
             messages = h_flat[src_idx]                        # [num_edges, H]
 
-            agg_flat = torch.zeros_like(h_flat)               # [B*N, H]
+            agg_flat.zero_()                                  # reuse buffer
             agg_flat.index_add_(0, dst_idx, messages)         # sum over incoming edges
             agg = agg_flat.reshape(B, N, self.hidden_dim)     # [B, N, H]
 
             # Node update with masking
             h = self.node_mlp(torch.cat([emb, agg], dim=-1))  # [B, N, H]
-            h = h * node_mask.unsqueeze(-1).float()
+            h = h * node_mask_f
 
         if self.pooling == "mean":
             denom = node_mask.sum(dim=1, keepdim=True).clamp(min=1).float()
@@ -799,10 +798,17 @@ def get_cached_terms(lhs):
     return get_ordered_sub_expressions(lhs)
 
 
+ACTION_CACHE_MAX = 10_000  # hard ceiling; FIFO evict half when exceeded
+
+
 def make_actions_cache(lhs, rhs, actions_fixed, action_dim, cache):
-    """Generates a list of possible actions and a valid action mask with caching."""
-    
-    # Check cache first
+    """Generates a list of possible actions and a valid action mask with caching.
+
+    `cache` is a plain dict mutated in-place. We hard-cap it at ACTION_CACHE_MAX
+    entries; when exceeded, we evict the oldest half (insertion order) so
+    long-running envs don't grow unbounded. Each entry is ~a few hundred bytes
+    (action tuples + a 50-bool mask), so 10k entries ≈ 5 MB per env.
+    """
     key = (lhs, rhs)
     if key in cache:
         return cache[key]
@@ -823,9 +829,14 @@ def make_actions_cache(lhs, rhs, actions_fixed, action_dim, cache):
     # Trim or pad with identity ops if needed
     actions = (actions[:action_dim] + [(custom_identity, None)] * action_dim)[:action_dim]
 
-    # Store in cache
-    cache[key] = (actions, valid_action_mask)
+    # Evict half (oldest first) if we're over the ceiling. Doing it BEFORE the
+    # insert keeps the post-insert size at most ACTION_CACHE_MAX // 2 + 1.
+    if len(cache) >= ACTION_CACHE_MAX:
+        n_evict = ACTION_CACHE_MAX // 2
+        for k in list(cache.keys())[:n_evict]:
+            del cache[k]
 
+    cache[key] = (actions, valid_action_mask)
     return actions, valid_action_mask
 
 
@@ -1086,6 +1097,11 @@ def sympy_expression_to_graph(expr, feature_dict):
     stack = [(expr, None)]  # (node, parent_index)
     node_idx = 0
 
+    # Hoisted out of the loop: encoding type is constant for a given feature_dict.
+    first_val = next(iter(feature_dict.values()))
+    is_1d = isinstance(first_val, int)
+    default_val = 0 if is_1d else [99, 99]
+
     while stack:
         node, parent_idx = stack.pop()
 
@@ -1096,12 +1112,6 @@ def sympy_expression_to_graph(expr, feature_dict):
 
         cur_idx = node_map[node]
         nodes.append(cur_idx)
-
-        # Get feature vector
-        # Detect encoding type (1D int or 2D list)
-        first_val = next(iter(feature_dict.values()))
-        is_1d = isinstance(first_val, int)
-        default_val = 0 if is_1d else [99, 99]
 
         # Get feature vector
         if node in feature_dict:

@@ -706,6 +706,24 @@ def _policy_action_probs(model, obs, action_mask: Optional[np.ndarray] = None) -
     return probs / s
 
 
+def _policy_value(model, obs) -> float:
+    """Return the PPO critic's value estimate V(s) for a single observation."""
+    with torch.no_grad():
+        obs_tensor, _ = model.policy.obs_to_tensor(obs)
+        values = model.policy.predict_values(obs_tensor)
+    return float(values.squeeze().cpu().item())
+
+
+def _state_complexity(env) -> int:
+    """Quick complexity proxy for the env's current (lhs, rhs)."""
+    u = getattr(env, "unwrapped", env)
+    try:
+        from utils.utils_env import get_complexity_expression
+        return int(get_complexity_expression(u.lhs) + get_complexity_expression(u.rhs))
+    except Exception:
+        return 0
+
+
 def _snapshot_env(env) -> Dict[str, Any]:
     u = getattr(env, "unwrapped", env)
     return dict(
@@ -747,17 +765,29 @@ def _restore_env(env, snap: Dict[str, Any]) -> None:
 
 
 def beam_solve_one(model, env, eqn, *, beam_width=5, topk_per_node=5,
-                   max_steps=60, per_eqn_seconds=EVAL_TIMEOUT_DET) -> bool:
+                   max_steps=60, per_eqn_seconds=EVAL_TIMEOUT_DET,
+                   beam_lambda: float = 0.0, beam_alpha: float = 0.0,
+                   beam_beta: float = 0.0) -> bool:
+    """Beam search with optional value-guidance.
+
+    Score(path) = sum_t log pi(a_t | s_t)
+                + beam_lambda * V(s_t_final)        # value head bonus on current node
+                - beam_alpha  * path_length         # prefer shorter paths
+                - beam_beta   * complexity(s_final) # prefer simpler states
+
+    With beam_lambda=alpha=beta=0 this is the original pure-policy beam.
+    """
     try:
         with time_limit(per_eqn_seconds):
             obs0 = _start_on_eqn(env, eqn)
             base = _snapshot_env(env)
-            beam = [(0.0, base, obs0, False)]
+            # Beam entries: (score, snap, obs, solved, depth)
+            beam = [(0.0, base, obs0, False, 0)]
             for _ in range(max_steps):
                 new_beam = []
-                for score, snap, obs, solved in beam:
+                for score, snap, obs, solved, depth in beam:
                     if solved:
-                        new_beam.append((score, snap, obs, True))
+                        new_beam.append((score, snap, obs, True, depth))
                         continue
                     _restore_env(env, snap)
                     # keep obs in sync with restored internal state
@@ -781,14 +811,53 @@ def beam_solve_one(model, env, eqn, *, beam_width=5, topk_per_node=5,
                         _restore_env(env, snap)
                         obs_next, _, terminated, truncated, info = env.step(int(a))
                         solved_next = bool(info.get("is_solved", False))
-                        score_next = score + float(np.log(probs[a] + 1e-12))
-                        new_beam.append((score_next, _snapshot_env(env), obs_next, solved_next))
+                        # Cumulative log-policy term
+                        log_pi = float(np.log(probs[a] + 1e-12))
+                        score_next = score + log_pi
+                        # Value-head bonus on the resulting state (skip if solved
+                        # — V is meaningless after terminal and may be 0 anyway).
+                        if beam_lambda != 0.0 and not solved_next:
+                            try:
+                                v = _policy_value(model, obs_next)
+                                score_next += beam_lambda * v
+                            except Exception:
+                                pass
+                        # Complexity penalty on the resulting state
+                        if beam_beta != 0.0 and not solved_next:
+                            score_next -= beam_beta * _state_complexity(env)
+                        # Length penalty
+                        if beam_alpha != 0.0:
+                            score_next -= beam_alpha
+                        new_beam.append((score_next, _snapshot_env(env), obs_next, solved_next, depth + 1))
                 if not new_beam:
                     return False
-                beam = nlargest(beam_width, new_beam, key=lambda x: x[0])
-                if any(s for _, _, _, s in beam):
+                # Canonical-state dedup: collapse beam entries that reach the same
+                # equation under the same CoV/relabel context, keeping the highest
+                # score. The CoV-stack depth + relabel-history-depth are included
+                # because two paths sharing (lhs, rhs) but different unwinds have
+                # different futures.
+                seen: Dict[Any, int] = {}
+                for i, (sc, snp, ob, sol, dp) in enumerate(new_beam):
+                    if sol:
+                        key = (id(snp), True)  # never collapse solved entries
+                    else:
+                        try:
+                            import sympy as _sp
+                            lhs_s = str(_sp.expand(snp.get("lhs")))
+                            rhs_s = str(_sp.expand(snp.get("rhs")))
+                        except Exception:
+                            lhs_s = str(snp.get("lhs"))
+                            rhs_s = str(snp.get("rhs"))
+                        cov_depth = len(snp.get("cov_inv") or [])
+                        rel_depth = len(snp.get("map_constants_history") or [])
+                        key = (lhs_s, rhs_s, cov_depth, rel_depth)
+                    if key not in seen or new_beam[seen[key]][0] < sc:
+                        seen[key] = i
+                deduped = [new_beam[i] for i in seen.values()]
+                beam = nlargest(beam_width, deduped, key=lambda x: x[0])
+                if any(s for _, _, _, s, _ in beam):
                     return True
-            return any(s for _, _, _, s in beam)
+            return any(s for _, _, _, s, _ in beam)
     except EvalTimeout:
         return False
     except Exception:
@@ -796,7 +865,9 @@ def beam_solve_one(model, env, eqn, *, beam_width=5, topk_per_node=5,
 
 
 def beam_accuracy(model, env, equations, *, beam_width=5, topk_per_node=5,
-                  max_steps=60, per_eqn_seconds=EVAL_TIMEOUT_DET) -> Optional[float]:
+                  max_steps=60, per_eqn_seconds=EVAL_TIMEOUT_DET,
+                  beam_lambda: float = 0.0, beam_alpha: float = 0.0,
+                  beam_beta: float = 0.0) -> Optional[float]:
     if not equations:
         return None
     solved = 0
@@ -805,7 +876,10 @@ def beam_accuracy(model, env, equations, *, beam_width=5, topk_per_node=5,
                             beam_width=beam_width,
                             topk_per_node=topk_per_node,
                             max_steps=max_steps,
-                            per_eqn_seconds=per_eqn_seconds)
+                            per_eqn_seconds=per_eqn_seconds,
+                            beam_lambda=beam_lambda,
+                            beam_alpha=beam_alpha,
+                            beam_beta=beam_beta)
         solved += int(ok)
     return solved / len(equations)
 
@@ -814,7 +888,7 @@ def beam_accuracy(model, env, equations, *, beam_width=5, topk_per_node=5,
 # Logging callback
 # ==========================
 class TrainingLogger(BaseCallback):
-    def __init__(self, algo_name: str, train_env, eval_env, eval_interval: int, log_interval: int, save_dir: str, verbose=1, early_stop_patience: int = 0):
+    def __init__(self, algo_name: str, train_env, eval_env, eval_interval: int, log_interval: int, save_dir: str, verbose=1, early_stop_patience: int = 0, eval_subsample: int = 0, eval_lite: bool = False):
         super().__init__(verbose)
         self.algo_name     = algo_name
         self.train_env     = train_env
@@ -830,6 +904,18 @@ class TrainingLogger(BaseCallback):
         self.train_eqns = _unwrap_attr(eval_env, "train_eqns") or _unwrap_attr(train_env, "train_eqns")
         self.test_eqns  = _unwrap_attr(eval_env, "test_eqns")  or _unwrap_attr(train_env, "test_eqns")
         self.num_eqns   = len(self.train_eqns) if self.train_eqns is not None else 1
+        # Pre-sample a deterministic test subset for in-training evals.
+        # 0 means "use the full set". The end-of-training eval always uses the full set.
+        self.eval_subsample = int(eval_subsample)
+        if self.eval_subsample > 0 and self.test_eqns and len(self.test_eqns) > self.eval_subsample:
+            rng = np.random.default_rng(0)
+            idx = rng.choice(len(self.test_eqns), size=self.eval_subsample, replace=False)
+            self._eval_subset = [self.test_eqns[i] for i in sorted(idx.tolist())]
+        else:
+            self._eval_subset = self.test_eqns
+        # When eval_lite is on we skip beam + at10 during training (greedy only).
+        # Early-stop falls back to test_greedy in lite mode.
+        self.eval_lite = bool(eval_lite)
         self.Tsolves: Dict[Any, int] = {}
         self.Tsolve: Optional[float]  = None
         self.Tconverge: Optional[int] = None
@@ -838,9 +924,10 @@ class TrainingLogger(BaseCallback):
         self.test_acc: List[float] = []
         self.test_beam: List[float] = []
         self.test_at10: List[float] = []
-        # Early-stopping + best checkpoint on test_beam
+        # Early-stopping + best checkpoint
         self.early_stop_patience = int(early_stop_patience)
         self.best_test_beam: float = -1.0
+        self.best_test_greedy: float = -1.0
         self.best_step: Optional[int] = None
         self.no_improve_count: int = 0
         self.stopped_early: bool = False
@@ -849,21 +936,34 @@ class TrainingLogger(BaseCallback):
     def _log_eval(self, step: int):
         solved = min(len(self.Tsolves), self.num_eqns)
         cov = solved / self.num_eqns if self.num_eqns else 0.0
-        tst = greedy_accuracy(self.model, self.eval_env, self.test_eqns,
-                              max_steps=5, per_eqn_seconds=EVAL_TIMEOUT_DET) if self.test_eqns else None
-        tbeam = beam_accuracy(self.model, self.eval_env, self.test_eqns,
-                              beam_width=5, topk_per_node=5, max_steps=5,
-                              per_eqn_seconds=EVAL_TIMEOUT_DET) if self.test_eqns else None
-        t10 = success_at_n(self.model, self.eval_env, self.test_eqns,
-                           n_trials=10, max_steps=5, per_eqn_seconds=EVAL_TIMEOUT_STOCH) if self.test_eqns else None
+        eqns = self._eval_subset
+        # Greedy always; beam + at10 only when not in lite mode.
+        tst = greedy_accuracy(self.model, self.eval_env, eqns,
+                              max_steps=5, per_eqn_seconds=EVAL_TIMEOUT_DET) if eqns else None
+        if self.eval_lite:
+            tbeam = None
+            t10 = None
+        else:
+            tbeam = beam_accuracy(self.model, self.eval_env, eqns,
+                                  beam_width=5, topk_per_node=5, max_steps=5,
+                                  per_eqn_seconds=EVAL_TIMEOUT_DET) if eqns else None
+            t10 = success_at_n(self.model, self.eval_env, eqns,
+                               n_trials=10, max_steps=5, per_eqn_seconds=EVAL_TIMEOUT_STOCH) if eqns else None
         self.log_steps.append(step)
         self.coverage.append(cov)
         self.test_acc.append(tst if tst is not None else np.nan)
         self.test_beam.append(tbeam if tbeam is not None else np.nan)
         self.test_at10.append(t10 if t10 is not None else np.nan)
-        # Track best test_beam, save best.zip on improvement
-        if tbeam is not None and tbeam > self.best_test_beam:
-            self.best_test_beam = float(tbeam)
+        # Track best for early-stopping. In lite mode use greedy; otherwise beam.
+        if self.eval_lite:
+            metric = tst
+            best_attr = "best_test_greedy"
+        else:
+            metric = tbeam
+            best_attr = "best_test_beam"
+        current_best = getattr(self, best_attr)
+        if metric is not None and metric > current_best:
+            setattr(self, best_attr, float(metric))
             self.best_step = step
             self.no_improve_count = 0
             self.model.save(os.path.join(self.ckpt_dir, "best.zip"))
@@ -872,8 +972,10 @@ class TrainingLogger(BaseCallback):
         tst_s   = f"{tst:.2f}"   if tst   is not None else "NA"
         tbeam_s = f"{tbeam:.2f}" if tbeam is not None else "NA"
         t10_s   = f"{t10:.2f}"   if t10   is not None else "NA"
-        best_s  = f"{self.best_test_beam:.2f}@{self.best_step}" if self.best_step is not None else "NA"
-        timed_print(f"[{self.algo_name}] t={step}: coverage={cov:.3f} | test_(greedy,beam,@10) =({tst_s}, {tbeam_s}, {t10_s}) | best_beam={best_s} | patience={self.no_improve_count}/{self.early_stop_patience}")
+        best_label = "best_greedy" if self.eval_lite else "best_beam"
+        best_val = getattr(self, best_attr)
+        best_s  = f"{best_val:.2f}@{self.best_step}" if self.best_step is not None else "NA"
+        timed_print(f"[{self.algo_name}] t={step}: coverage={cov:.3f} | test_(greedy,beam,@10) =({tst_s}, {tbeam_s}, {t10_s}) | {best_label}={best_s} | patience={self.no_improve_count}/{self.early_stop_patience}")
         pd.DataFrame({
             "step": self.log_steps,
             "coverage": self.coverage,
@@ -957,6 +1059,8 @@ def run_trial(
     use_cov: bool = False,
     early_stop_patience: int = 0,
     anti_loop_penalty: float = 0.0,
+    eval_subsample: int = 0,
+    eval_lite: bool = False,
 ):
     train_env = make_train_vec_env(
         n_envs=n_envs,
@@ -995,6 +1099,8 @@ def run_trial(
         log_interval=log_interval,
         save_dir=run_dir,
         early_stop_patience=early_stop_patience,
+        eval_subsample=eval_subsample,
+        eval_lite=eval_lite,
     )
     #cb_list: List[BaseCallback] = [cb_main, ProgressBarCallback()]
     cb_list: List[BaseCallback] = [cb_main]
@@ -1125,6 +1231,8 @@ if __name__ == "__main__":
     train_group.add_argument('--ent_coef', type=float, default=0.01)
     train_group.add_argument('--early_stop_patience', type=int, default=0, help='Stop trial after N evals with no test_beam improvement (0 = disabled). Also enables best.zip checkpointing on every improvement.')
     train_group.add_argument('--anti_loop_penalty', type=float, default=0.0, help='Reward penalty alpha when current action == previous action (targets REL-loop failure mode). 0 = disabled.')
+    train_group.add_argument('--eval_subsample', type=int, default=0, help='Sample N test eqns for in-training evals (0 = use full set). Deterministic seed so curves are comparable across runs.')
+    train_group.add_argument('--eval_lite', action='store_true', help='Skip beam + at10 during in-training evals (greedy only). Final eval at end-of-training still runs all three. Switches early-stop metric to test_greedy.')
 
     eval_group = parser.add_argument_group("Eval / Logging")
     eval_group.add_argument('--eval_interval', type=int, default=0, help='Evaluation interval (steps)')
@@ -1149,7 +1257,7 @@ if __name__ == "__main__":
     replay_group = parser.add_argument_group("Success Replay (optional)")
     replay_group.add_argument('--sr_mix_ratio', type=float, default=0.5, help='Fraction of PPO batch worth of BC steps')
     replay_group.add_argument('--sr_batch_size', type=int, default=256, help='BC minibatch size')
-    replay_group.add_argument('--sr_iters_per_rollout', type=int, default=10, help='BC iters per PPO rollout')
+    replay_group.add_argument('--sr_iters_per_rollout', type=int, default=5, help='BC iters per PPO rollout (was 10; lowered for speed)')
     replay_group.add_argument('--sr_capacity', type=int, default=20000, help='Replay capacity')
 
     args = parser.parse_args()
@@ -1210,6 +1318,7 @@ if __name__ == "__main__":
                 n_envs, args.action_space, args.use_success_replay, args.sr_mix_ratio,
                 args.sr_batch_size, args.sr_iters_per_rollout, args.sr_capacity, args.ent_coef,
                 args.use_cov, args.early_stop_patience, args.anti_loop_penalty,
+                args.eval_subsample, args.eval_lite,
             ))
 
     rows, run_dirs = run_parallel(jobs, n_workers=n_workers, timeout_per_job=TRIAL_WALLCLOCK_LIMIT)

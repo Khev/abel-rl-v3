@@ -118,3 +118,98 @@ on cov_level3 (19 quadratics, simpler than cov_level5).
 - Wiring trained π_cov into the closed-equation env (replacing pi_cov_general)
   — needed for end-to-end paper results, deferred until π_cov reliably solves
   its own dataset.
+
+---
+
+# Session findings — 2026-05-18 (continuation)
+
+After deciding the π_cov direct-training arm was too brittle, we pivoted to
+the **mixed-dataset** framing: a single PPO policy with the CoV macroaction
+(calling an analytic `pi_cov_general`) inside the closed-equation env. This
+section captures what we discovered in that arm.
+
+## Headline results
+
+| Config | test_beam (best) | notes |
+|---|---|---|
+| mixed_v2_easy seed8001 (baseline, plain beam, max_steps=5) | 0.31 | original training-time eval |
+| mixed_v2_easy seed8001 (plain beam, max_steps=10, NO dedup) | 0.275 | deeper but no dedup actually hurts |
+| mixed_v2_easy seed8001 + value-beam λ=1.0 | 0.352 | +28% over plain |
+| mixed_v2_easy seed8001 + value-beam λ=1.0 + dedup | **0.396** | **+44% over plain, no retraining** |
+| mixed_v2_easy seed9100 (anti-loop α=0.1, plain beam) | 0.341 (peak), 0.275 final | one seed of 3 succeeded |
+| mixed_v2_easy seed9100 + value-beam (λ>0) | hurts | value head miscalibrated when policy already strong |
+| mixed_v2_small seed7000 final | 0.242 | takes 2× more steps than easy-bootstrap |
+
+Best overall: **seed8001 + value-beam λ=1.0 + dedup = 0.396 test_beam**. The
+search-side improvement is bigger than the training-side anti-loop gain and
+applies retroactively to every existing checkpoint.
+
+## What we built
+
+- **`envs/env_multi_eqn.py`**: caught `HeuristicGCDFailed` (+ siblings) at
+  three sites (`_apply_cov`, the CoV-unwind on solve, `_check_eqn_solved_local`);
+  added `anti_loop_penalty` per-step reward shaping; switched cache=True default
+  and bounded `make_actions_cache` to 10k entries with FIFO eviction.
+- **`train_abel.py`**: added `sys.set_int_max_str_digits(0)` (sympy can emit
+  huge ints that hit the Python 3.11 cap and crash printing); added
+  `--early_stop_patience`, `--anti_loop_penalty`, `--eval_subsample`,
+  `--eval_lite`; lowered `sr_iters_per_rollout` default 10→5; added
+  `_policy_value` + `_state_complexity` helpers; refactored `beam_solve_one`
+  to support `--beam_lambda --beam_alpha --beam_beta` and canonical-state
+  dedup.
+- **`diagnose_first_action.py` / `diagnose_action_traces.py` /
+  `diagnose_antiloop_vs_baseline.py`**: failure-mode analysis tools. Showed
+  baseline locks into one quartic recipe and falls into REL-loops on simpler
+  eqns; anti-loop α=0.1 cuts the average failed-trace repeat-fraction from
+  0.86 → 0.48.
+- **`eval_value_beam.py`**: standalone re-eval. Takes any checkpoint, runs
+  plain + value-guided beam at a λ-sweep on the test set. This is how we
+  retroactively lift Table 1.
+- **`equation_templates/mixed_v2_{easy,tiny}/build.py`**: stratified
+  datasets (916/91 and 100/10).
+- **`run_mass_value_beam.sh`**: wrapper that re-evaluates every interesting
+  checkpoint with both plain and value-beam, building a CSV for Table 1.
+
+## What surprised us
+
+1. **The action cache barely matters** (~5% on env step in calibration).
+   Each step has a unique `(lhs, rhs)`, so cache hits are rare during one
+   episode; only resets benefit. The big wins live in the eval phase, not
+   env step.
+2. **Test-eval phase was the real bottleneck on mixed_v2_large**: with 1001
+   test eqns × greedy+beam+at10, each eval cycle could take 30+ min. The
+   `--eval_subsample` + `--eval_lite` flags drop this to seconds.
+3. **The greedy/beam gap is huge**: seed8001 greedy=0.011 vs beam=0.275 vs
+   value-beam=0.396. The policy has the right ideas but bad argmax — search
+   matters far more than typical RL papers suggest.
+4. **Anti-loop and value-beam target the same problem from different ends**.
+   Anti-loop forces action diversity during *training*; value-beam corrects
+   bad policy decisions at *decode*. On the baseline they both reach the
+   same 0.35-0.40 ceiling; they don't naturally stack on the same trained
+   model (anti-loop's reward shaping miscalibrates the value head).
+5. **SymPy crashes were quietly killing workers**: HeuristicGCDFailed
+   (non-deterministic GCD heuristic), and `int_max_str_digits` (printing
+   huge ints from `simplify`) each cost us a full mixed_v2_large run before
+   we noticed.
+
+## Bugs fixed this session
+
+- Killing one worker in a `ProcessPoolExecutor` cascades to all peers via
+  `BrokenProcessPool`. Lesson: can't kill a stuck seed without losing
+  productive ones in the same pool. Worked around by running independent
+  pools per experiment.
+- `eval_value_beam.py`'s initial version passed raw strings as equations;
+  the env's `set_equation` doesn't sympify, so test_acc was 0 across all
+  λ. Fixed by sympifying in the loader.
+
+## Open questions / next pass
+
+- Anti-loop seed7100 plateaued at test_beam=0.15 (early-stopped). Why is
+  seed-variance so high under anti-loop? Maybe the penalty interacts badly
+  with success-replay if early successes are themselves repetitive.
+- Does value-beam + α=0.3 (length penalty) help? Earlier α/β grid was run
+  BEFORE the dedup change; re-run with dedup.
+- Does BC pretraining from existing solved traces stack with value-beam?
+  (Untested.)
+- Action decomposition (op-head + term-pointer pointer) — ChatGPT's #2.
+  Bigger refactor, deferred to next paper.
