@@ -203,11 +203,12 @@ import random
 from collections import deque
 
 class SuccessBuffer:
+    """Original flat buffer. Uniform random sampling across all (obs, action) pairs."""
     def __init__(self, capacity=20000):
         self.obs = deque(maxlen=capacity)
         self.act = deque(maxlen=capacity)
 
-    def add_episode(self, traj_obs, traj_act):
+    def add_episode(self, traj_obs, traj_act, eqn_key=None):
         for o, a in zip(traj_obs, traj_act):
             self.obs.append(o)
             self.act.append(int(a))
@@ -224,6 +225,116 @@ class SuccessBuffer:
     def __len__(self):
         return len(self.obs)
 
+    def maintenance(self):
+        """Called periodically by the callback. Subclasses can override."""
+        pass
+
+
+class BalancedSuccessBuffer:
+    """Per-equation balanced sampling: pick an eqn uniformly, then a (obs, action)
+    pair within that eqn's traces. Prevents over-represented classes (e.g., common
+    abel_level3 forms) from dominating BC updates.
+
+    Optional length-weighting: when sampling within an eqn's traces, prefer
+    shorter ones (which represent cleaner recipes).
+    """
+    def __init__(self, capacity=20000, per_eqn_cap=200, length_weighted=True):
+        self.capacity = int(capacity)
+        self.per_eqn_cap = int(per_eqn_cap)
+        self.length_weighted = bool(length_weighted)
+        # Per-eqn dict: eqn_key -> list of (obs, action, trace_length) tuples
+        from collections import defaultdict
+        self._per_eqn = defaultdict(list)
+        self._total = 0
+
+    def add_episode(self, traj_obs, traj_act, eqn_key=None):
+        if eqn_key is None:
+            eqn_key = "__default__"
+        L = len(traj_obs)
+        entries = self._per_eqn[eqn_key]
+        for o, a in zip(traj_obs, traj_act):
+            entries.append((o, int(a), L))
+            self._total += 1
+        # Cap per-eqn size: keep most recent entries
+        if len(entries) > self.per_eqn_cap:
+            drop = len(entries) - self.per_eqn_cap
+            self._total -= drop
+            del entries[:drop]
+        # Global capacity: drop entire eqns if we're over
+        while self._total > self.capacity and self._per_eqn:
+            # Drop the eqn with the most entries (most over-represented)
+            drop_key = max(self._per_eqn, key=lambda k: len(self._per_eqn[k]))
+            self._total -= len(self._per_eqn[drop_key])
+            del self._per_eqn[drop_key]
+
+    def sample(self, batch_size):
+        if not self._per_eqn:
+            return None, None
+        eqns = list(self._per_eqn.keys())
+        obs_list, act_list = [], []
+        for _ in range(batch_size):
+            # Pick an eqn uniformly
+            key = random.choice(eqns)
+            entries = self._per_eqn[key]
+            if not entries:
+                continue
+            # Pick an entry, optionally weighted by 1/length
+            if self.length_weighted and len(entries) > 1:
+                # Weight by 1/L; shorter traces preferred
+                weights = np.array([1.0 / max(1, e[2]) for e in entries])
+                weights = weights / weights.sum()
+                idx = int(np.random.choice(len(entries), p=weights))
+            else:
+                idx = random.randrange(len(entries))
+            o, a, _L = entries[idx]
+            obs_list.append(o)
+            act_list.append(a)
+        if not obs_list:
+            return None, None
+        return obs_list, np.array(act_list, dtype=np.int64)
+
+    def __len__(self):
+        return self._total
+
+    def maintenance(self):
+        pass
+
+
+class FreshSuccessBuffer(SuccessBuffer):
+    """Periodic refresh: drop oldest half every `refresh_every` calls to
+    maintenance(). Combats staleness — entries the policy has already memorized
+    stop wasting BC compute. Otherwise identical to SuccessBuffer.
+    """
+    def __init__(self, capacity=20000, refresh_every=20):
+        super().__init__(capacity=capacity)
+        self.refresh_every = int(refresh_every)
+        self._calls = 0
+
+    def maintenance(self):
+        self._calls += 1
+        if self._calls % self.refresh_every == 0 and len(self.obs) > 2:
+            # Drop oldest half
+            n = len(self.obs)
+            drop = n // 2
+            for _ in range(drop):
+                self.obs.popleft()
+                self.act.popleft()
+
+
+def make_success_buffer(kind: str, capacity: int = 20000):
+    """Factory for success-buffer variants."""
+    kind = (kind or "flat").lower()
+    if kind == "flat":
+        return SuccessBuffer(capacity=capacity)
+    elif kind == "balanced":
+        return BalancedSuccessBuffer(capacity=capacity, length_weighted=False)
+    elif kind == "balanced_lw":
+        return BalancedSuccessBuffer(capacity=capacity, length_weighted=True)
+    elif kind == "fresh":
+        return FreshSuccessBuffer(capacity=capacity, refresh_every=20)
+    else:
+        raise ValueError(f"Unknown buffer kind: {kind}")
+
 class SuccessReplayCallback(BaseCallback):
     """
     Harvests solved trajectories and runs small behavior-cloning (BC) updates
@@ -236,13 +347,15 @@ class SuccessReplayCallback(BaseCallback):
         batch_size=256,
         iters_per_rollout=10,
         capacity=20000,
+        buffer_kind="flat",
         verbose=0
     ):
         super().__init__(verbose)
         self.mix_ratio = float(mix_ratio)
         self.batch_size = int(batch_size)
         self.iters_per_rollout = int(iters_per_rollout)
-        self.buf = SuccessBuffer(capacity=capacity)
+        self.buffer_kind = str(buffer_kind)
+        self.buf = make_success_buffer(self.buffer_kind, capacity=capacity)
         self.seen_eqns = set()
         self.seen_traces = set()
 
@@ -262,7 +375,7 @@ class SuccessReplayCallback(BaseCallback):
                     key = (str(main_eqn), act_tuple)
                     if key not in self.seen_traces:
                         self.seen_traces.add(key)
-                        self.buf.add_episode(traj_obs, traj_act)
+                        self.buf.add_episode(traj_obs, traj_act, eqn_key=str(main_eqn))
         return True
 
     # @torch.no_grad()
@@ -311,6 +424,8 @@ class SuccessReplayCallback(BaseCallback):
         return float(loss_bc.item()), float(ent.item())
 
     def _on_rollout_end(self) -> None:
+        # Run buffer maintenance (e.g., FreshSuccessBuffer drops oldest half).
+        self.buf.maintenance()
         if len(self.buf) == 0:
             return
         n_envs = getattr(self.training_env, "num_envs", 1)
@@ -325,7 +440,7 @@ class SuccessReplayCallback(BaseCallback):
             lbc, ent = self._supervised_step(obs_b, act_b)
             bc_losses.append(lbc); ents.append(ent)
         if self.verbose and bc_losses:
-            print(f"[SuccessReplay] size={len(self.buf)} bc_steps={len(bc_losses)} "
+            print(f"[SuccessReplay/{self.buffer_kind}] size={len(self.buf)} bc_steps={len(bc_losses)} "
                   f"bc_loss={np.mean(bc_losses):.4f} ent={np.mean(ents):.3f}")
 
 # ==========================
@@ -1066,6 +1181,7 @@ def run_trial(
     eval_subsample: int = 0,
     eval_lite: bool = False,
     use_cbrt: bool = True,
+    sr_buffer_kind: str = "flat",
 ):
     train_env = make_train_vec_env(
         n_envs=n_envs,
@@ -1118,6 +1234,7 @@ def run_trial(
                 batch_size=sr_batch_size,
                 iters_per_rollout=sr_iters_per_rollout,
                 capacity=sr_capacity,
+                buffer_kind=sr_buffer_kind,
                 verbose=0
             )
         )
@@ -1267,6 +1384,9 @@ if __name__ == "__main__":
     replay_group.add_argument('--sr_batch_size', type=int, default=256, help='BC minibatch size')
     replay_group.add_argument('--sr_iters_per_rollout', type=int, default=5, help='BC iters per PPO rollout (was 10; lowered for speed)')
     replay_group.add_argument('--sr_capacity', type=int, default=20000, help='Replay capacity')
+    replay_group.add_argument('--sr_buffer_kind', type=str, default='flat',
+                              choices=['flat', 'balanced', 'balanced_lw', 'fresh'],
+                              help='Buffer type. flat: original; balanced: per-equation uniform sampling; balanced_lw: balanced + length-weighted (prefer shorter traces); fresh: drop oldest half every 20 rollouts.')
 
     args = parser.parse_args()
     args.use_curriculum = True
@@ -1326,7 +1446,7 @@ if __name__ == "__main__":
                 n_envs, args.action_space, args.use_success_replay, args.sr_mix_ratio,
                 args.sr_batch_size, args.sr_iters_per_rollout, args.sr_capacity, args.ent_coef,
                 args.use_cov, args.early_stop_patience, args.anti_loop_penalty,
-                args.eval_subsample, args.eval_lite, args.use_cbrt,
+                args.eval_subsample, args.eval_lite, args.use_cbrt, args.sr_buffer_kind,
             ))
 
     rows, run_dirs = run_parallel(jobs, n_workers=n_workers, timeout_per_job=TRIAL_WALLCLOCK_LIMIT)
