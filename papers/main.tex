@@ -350,6 +350,44 @@ where $T$ is path length and $C$ is the per-state complexity proxy (count of pol
 
 \textit{Cost.} Adding $V_\theta$ to beam scoring is one extra forward pass per node expansion. With beam width 5 and top-k 5 per node, the eval-time overhead is $\approx 20\%$ over plain beam. The dedup pass adds an $\mathcal{O}(B)$ \texttt{expand}/string-comparison per beam step. Both are negligible compared to the cost of training.
 
+\subsection{Per-class analysis: what each method actually unlocks}
+\label{sec:per_class}
+Aggregate \textit{test}$_{\text{beam}}$ numbers hide a striking class-dependent structure. Table~\ref{tab:per_class} breaks down accuracy by the seven source classes of \texttt{mixed\_v2\_easy} for our three representative checkpoints: a baseline seed (8001), an unlucky baseline seed (7001), and our anti-loop seed (9100).
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{lccc}
+\toprule
+class (n)            & seed7001 (base)    & seed8001 (base)    & seed9100 (anti-loop) \\
+\midrule
+quartic (15)         & 0/0.20/\textbf{1.00} & 0/\textbf{1.00}/1.00 & 0/\textbf{0.00}/0.00 \\
+quadratic (15)       & 0/0.00/0.00        & 0.80/0.93/0.93     & 0.87/0.93/0.87       \\
+cubic (15)           & \textbf{0/0/0}     & 0/0/0              & 0/0/0                \\
+exponential (15)     & \textbf{0/0/0}     & 0/0/0              & 0/0/0                \\
+abel\_level3 (20)    & 0/0.20/0.20        & 0.05/0.15/0.25     & 0.25/\textbf{0.40}/0.40 \\
+abel\_level2 (10)    & 0.10/0.30/0.30     & 0.10/0.50/0.50     & 0.10/\textbf{0.70}/0.70 \\
+abel\_level1 (1)     & 1/1/1              & 0/1/1              & 1/1/1                \\
+\bottomrule
+\end{tabular}
+\caption{\textbf{Per-class test accuracy} on \texttt{mixed\_v2\_easy}, shown as greedy / plain-beam / value-beam fractions. Notable cells in bold. Each method unlocks a different class.}
+\label{tab:per_class}
+\end{table}
+
+Five findings emerge.
+
+\textbf{(i) Cubic and exponential are unsolved across the board.} 30 of the 91 test equations ($33\%$) lie in classes where every checkpoint scores zero on every metric. Inspection reveals the cause is action-set limited rather than training-data limited: after the depressed-cubic CoV $x \to x - b/(3a)$ the equation collapses to $a y^3 + d = 0$, which requires a cube-root operation -- but our action set contains only \texttt{square}, \texttt{sqrt}, \texttt{log}, \texttt{exp}, \texttt{sin}, $\sin^{-1}$, \texttt{cos}, $\cos^{-1}$, and multiplication by $-1$. There is no \texttt{cbrt}. Exponential equations are in principle solvable (CoV $x \to \log y / k$ yields a quadratic in $y$), but no checkpoint has discovered the recipe -- suggesting they are training-data limited and would benefit from oversampling that class.
+
+\textbf{(ii) The quartic class is fragile.} Baseline seed8001 solves all 15 quartics with plain beam -- the ``depressed-quartic 6-step recipe'' (\texttt{COV REL - / SRT SRT}) from Section~\ref{sec:antiloop}. Baseline seed7001 has the recipe but cannot find it under greedy or plain beam (3/15); value-guided beam unlocks it (15/15) because the policy ranks the correct first action highly but not top-1. Anti-loop seed9100 has \emph{lost} the quartic class entirely (0/15): the action-diversity penalty broke the recipe, which has \texttt{relabel\_const} as action 2 and is naturally repetitive.
+
+\textbf{(iii) Anti-loop trades quartic memorization for closed-equation breadth.} While losing quartic, seed9100 gains on \texttt{abel\_level3} ($0.40$ vs.\ $0.15$-$0.25$) and \texttt{abel\_level2} ($0.70$ vs.\ $0.30$-$0.50$). The penalty pushes the policy away from any single repetitive recipe, producing a more general but less peaked solver. This is the qualitative shift behind the aggregate gain in Section~\ref{sec:antiloop}.
+
+\textbf{(iv) Value-guided beam specifically helps when the policy is unsharp.} The seed7001 quartic case ($0.20 \to 1.00$) is the cleanest example: the value head correctly identifies the productive path that the policy ranks below top-1. On checkpoints where the policy already places the right action first (seed8001 quartic, seed9100 closed eqns), value-beam gives no further lift.
+
+\textbf{(v) Methods are complementary by class.} No single method dominates. Best-of-three by class gives a hypothetical \textit{test}$_{\text{beam}}$ of $\approx 0.60$ -- substantially higher than any single method. Combining methods (e.g., training a model with anti-loop \emph{and} a separate quartic-specialist model, then voting) is a natural extension.
+
+The cubic action-set limitation and the exponential training-data gap are the two largest sources of remaining test-set error. Both are concrete, addressable shortcomings rather than fundamental limits of the approach.
+
 % TODO scratchpad of ideas (commented out so it doesn't render):
 %   - Abel: verify equations are (i) solvable, (ii) solvable within max_steps.
 %     E.g., a^18 x^3 can arise from repeated (mul,a) and pow.
