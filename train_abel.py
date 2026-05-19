@@ -349,6 +349,7 @@ def make_env(
     use_success_replay: bool = False,
     use_cov: bool = False,
     anti_loop_penalty: float = 0.0,
+    use_cbrt: bool = True,
 ):
     #state_rep = 'graph_integer_1d' if 'tree' in agent else 'integer_1d'
     use_graph = any(tok in agent.split('-') for tok in ('tree','gnn','sage'))
@@ -368,6 +369,7 @@ def make_env(
                 use_success_replay=use_success_replay,
                 use_cov=use_cov,
                 anti_loop_penalty=anti_loop_penalty,
+                use_cbrt=use_cbrt,
             )
         else:
             EnvCls = multiEqn
@@ -404,6 +406,7 @@ def make_train_vec_env(
     use_success_replay: bool,
     use_cov: bool = False,
     anti_loop_penalty: float = 0.0,
+    use_cbrt: bool = True,
 ):
     """Create a vectorized environment for training."""
     vec_cls = SubprocVecEnv if n_envs > 1 else DummyVecEnv
@@ -418,6 +421,7 @@ def make_train_vec_env(
             use_success_replay=use_success_replay,
             use_cov=use_cov,
             anti_loop_penalty=anti_loop_penalty,
+            use_cbrt=use_cbrt,
         ),
         n_envs=n_envs,
         seed=seed,
@@ -1061,6 +1065,7 @@ def run_trial(
     anti_loop_penalty: float = 0.0,
     eval_subsample: int = 0,
     eval_lite: bool = False,
+    use_cbrt: bool = True,
 ):
     train_env = make_train_vec_env(
         n_envs=n_envs,
@@ -1076,6 +1081,7 @@ def run_trial(
         use_success_replay=use_success_replay,
         use_cov=use_cov,
         anti_loop_penalty=anti_loop_penalty,
+        use_cbrt=use_cbrt,
     )
     eval_env  = make_env(
         env_name, agent, gen, seed=seed + 777,
@@ -1086,6 +1092,7 @@ def run_trial(
         use_action_mask=action_space == 'dynamic',
         use_success_replay=use_success_replay,
         use_cov=use_cov,
+        use_cbrt=use_cbrt,
     )
     model = make_agent(agent, train_env, hidden_dim, ent_coef=ent_coef,  seed=seed, load_path=load_model_path, tree_kwargs=tree_kwargs, action_space=action_space)
     tag = f"seed{seed}"
@@ -1220,6 +1227,7 @@ if __name__ == "__main__":
     env_group.add_argument('--use_relabel_constants', action='store_true', help='Enable relabel-constants macroaction')
     env_group.add_argument('--use_success_replay', action='store_true', help='Enable success replay BC updates')
     env_group.add_argument('--use_cov', action='store_true', help='enable change of variables')
+    env_group.add_argument('--use_cbrt', action='store_true', default=True, help='Include cube-root in fixed action set. Required for the cubic class to be solvable. Default: True. Pass --no-use-cbrt (via argparse BooleanOptionalAction-style or by setting explicitly) to recover the pre-cbrt action ordering for legacy checkpoints.')
     env_group.add_argument('--use_action_mask', action='store_true', help='Enable action masking for dynamic action space')
 
     train_group = parser.add_argument_group("Training")
@@ -1318,7 +1326,7 @@ if __name__ == "__main__":
                 n_envs, args.action_space, args.use_success_replay, args.sr_mix_ratio,
                 args.sr_batch_size, args.sr_iters_per_rollout, args.sr_capacity, args.ent_coef,
                 args.use_cov, args.early_stop_patience, args.anti_loop_penalty,
-                args.eval_subsample, args.eval_lite,
+                args.eval_subsample, args.eval_lite, args.use_cbrt,
             ))
 
     rows, run_dirs = run_parallel(jobs, n_workers=n_workers, timeout_per_job=TRIAL_WALLCLOCK_LIMIT)

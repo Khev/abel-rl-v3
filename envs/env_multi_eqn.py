@@ -145,6 +145,7 @@ class multiEqn(Env):
                  step_timeout: float = 0.5,
                  train_eqns=None,
                  anti_loop_penalty: float = 0.0,
+                 use_cbrt: bool = True,
                  ) -> None:
         super().__init__()
 
@@ -158,6 +159,7 @@ class multiEqn(Env):
         self.step_timeout = step_timeout
         self.anti_loop_penalty = float(anti_loop_penalty)
         self.last_action: Optional[int] = None
+        self.use_cbrt = bool(use_cbrt)
 
         # Rewards
         self.reward_solved = +100
@@ -286,7 +288,10 @@ class multiEqn(Env):
             self.train_eqns, self.test_eqns, self.state_rep
         )
 
-        # Define some fixed 'global' transformations
+        # Define some fixed 'global' transformations.
+        # When use_cbrt=False we preserve the ORIGINAL action ordering exactly
+        # so checkpoints trained before the cbrt feature still load with the
+        # same action-index semantics.
         self.actions_fixed = [
             (custom_expand, None),
             (custom_collect, self.x),
@@ -300,6 +305,10 @@ class multiEqn(Env):
             (inverse_cos, None),
             (mul, -1),
         ]
+        # Append cbrt at the END (not inserted mid-list) to keep old action
+        # indices stable. Cubic class requires this to be solvable.
+        if self.use_cbrt:
+            self.actions_fixed.append((custom_cbrt, None))
 
         # Add CoV placeholder if enabled
         if self.use_cov and callable(self.pi_cov):

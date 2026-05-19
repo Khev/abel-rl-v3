@@ -119,6 +119,29 @@ def custom_sqrt(expr, term=None, *, ops_limit: int = OPS_SIMPLIFY_LIMIT):
         return expr
 
 
+def custom_cbrt(expr, term=None, *, ops_limit: int = OPS_SIMPLIFY_LIMIT):
+    """
+    Fast & safe cube-root. Mirrors custom_sqrt:
+      1) If expr is structurally z**3, return z.
+      2) Try powdenest (cheap) to expose hidden cubes.
+      3) Only if small enough (by count_ops), try simplify to see if it becomes z**3.
+      4) Otherwise return expr ** (1/3). Never raise.
+    """
+    try:
+        if isinstance(expr, Pow) and expr.exp == 3:
+            return expr.base
+        expr_den = powdenest(expr, force=True)
+        if isinstance(expr_den, Pow) and expr_den.exp == 3:
+            return expr_den.base
+        if count_ops(expr_den) <= ops_limit:
+            simplified = simplify(expr_den)
+            if isinstance(simplified, Pow) and simplified.exp == 3:
+                return simplified.base
+        return Pow(expr, Rational(1, 3))
+    except Exception:
+        return expr
+
+
 def custom_sqrt_old(expr, term):
     # Check if the expression is a perfect square
     simplified_expr = simplify(expr)
@@ -366,6 +389,7 @@ operation_names = {
     custom_ratsimp: "ratsimp",
     custom_square: "square",
     custom_sqrt: "sqrt",
+    custom_cbrt: "cbrt",
     inverse_sin: 'sin^{-1}',
     inverse_cos: 'cos^{-1}',
     inverse_tan: 'tan^{-1}',
