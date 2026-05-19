@@ -141,7 +141,7 @@ class multiEqn(Env):
                  use_cov=False,
                  #pi_cov = pi_cov_quadratic,
                  pi_cov = pi_cov_general,
-                 max_cov_apps = 1,
+                 max_cov_apps = 3,  # was 1; bumped to allow nested CoV (e.g. exp -> quadratic depression). See trace_exp.py for the failure mode at max=1.
                  step_timeout: float = 0.5,
                  train_eqns=None,
                  anti_loop_penalty: float = 0.0,
