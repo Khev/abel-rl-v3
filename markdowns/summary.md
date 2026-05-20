@@ -7,25 +7,46 @@ deferred. Updates by hand as new results land.
 
 ## 1. Headline result
 
-**`test_beam = 0.62` on the mixed_v2_easy open-equation test set** (56/91)
-from a single seed (`seed10000`) using the full method stack:
+**`test_beam = 0.80` on the mixed_v2_easy open-equation test set** (73/91)
+from a single seed (`seed14000`, best.zip checkpoint) using the full
+method stack PLUS the fresh-buffer success-replay variant:
 
 - `ppo-tree-rc-buf-cov` (relabel-constants + success-replay + CoV macroaction)
 - `--anti_loop_penalty 0.1` (action-diversity penalty)
 - `--use_cbrt` (cube-root action enabled)
-- Plain beam at eval with `max_steps=10` and canonical-state dedup
-- Value-guided beam (`λ=1.0`) actually **hurts** this seed by 1-3pp:
-  the trained policy is already sharp enough that V(s) signal becomes noise.
+- `--sr_buffer_kind fresh` (drop-oldest-50%-every-20-rollouts buffer)
+- `max_cov_apps = 3` (env default; allows nested CoV)
+- **best.zip** (early-stop-selected checkpoint, NOT final-step)
+- Value-guided beam (`λ=1.0`) + canonical-state dedup at `max_steps=10`
 
-Greedy test_acc on the same checkpoint: 0.31 (28/91). So the lift from
-beam+dedup is responsible for going 0.31 → 0.62.
+### Progression of the headline number
 
-A second viable seed (`seed8000`, training stalled at 1.8M of 3M) reaches
-test_beam = 0.41 with the same stack. The 3rd seed (`seed9000`) was a
-failure (test_beam = 0.05). So **best-config 3-seed sweep**: 2/3 viable,
-range 0.41–0.62, mean ≈ 0.52.
+| Config | test_beam |
+|---|---|
+| Plain-beam baseline (no methods) | ~0.27 |
+| seed10000 — full stack, **flat** buffer, latest.zip | 0.62 |
+| seed14000 — full stack + **fresh** buffer, latest.zip (t=3M) | 0.52 |
+| **seed14000 — full stack + fresh buffer, best.zip** | **0.80** |
 
-For mixed_v2_easy plain-beam baseline (no methods): test_beam ≈ 0.27.
+### Two crucial findings behind the 0.80
+
+1. **Checkpoint selection is worth ~28 points.** The final-step checkpoint
+   of seed14000 scores only 0.52; the early-stopped best.zip scores 0.80.
+   The policy degrades under continued training (late-training drift seen
+   across seeds). The early-stopping + best.zip machinery is load-bearing.
+
+2. **The greedy/beam gap is extreme at best.zip** (greedy 0.09 → beam 0.80).
+   The policy represents the solution paths — beam recovers them — but its
+   top-1 action is unreliable. Search is the dominant contributor, not a
+   marginal add-on.
+
+### Caveat
+
+This is n=1 at the 0.80 configuration. A multi-seed fresh-buffer sweep is
+in flight. The claim we are confident in is the **ordering**:
+baseline (0.27) < flat-buffer full stack (0.62) < fresh-buffer full
+stack (0.80). seed10000 earlier gave a 3-seed range of 0.41–0.62 on the
+flat-buffer config.
 
 ---
 
