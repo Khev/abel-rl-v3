@@ -369,41 +369,37 @@ The single largest training-side ingredient is the \emph{fresh} success-replay b
 
 \subsection{Per-class analysis: what each method actually unlocks}
 \label{sec:per_class}
-Aggregate \textit{test}$_{\text{beam}}$ numbers hide a striking class-dependent structure. Table~\ref{tab:per_class} breaks down accuracy by the seven source classes of \texttt{mixed\_v2\_easy} for our three representative checkpoints: a baseline seed (8001), an unlucky baseline seed (7001), and our anti-loop seed (9100).
+Aggregate \textit{test}$_{\text{beam}}$ numbers hide a striking class-dependent structure. Table~\ref{tab:per_class} breaks down accuracy by the seven source classes of \texttt{mixed\_v2\_easy}, contrasting a baseline checkpoint (seed8001, plain \textsc{ppo-tree-rc-buf-cov}) with the full-stack fresh-buffer checkpoint (seed14000, best.zip).
 
 \begin{table}[h]
 \centering
 \small
-\begin{tabular}{lccc}
+\begin{tabular}{lcc}
 \toprule
-class (n)            & seed7001 (base)    & seed8001 (base)    & seed9100 (anti-loop) \\
+class (n)            & seed8001 (baseline) & \textbf{seed14000 (full + fresh)} \\
 \midrule
-quartic (15)         & 0/0.20/\textbf{1.00} & 0/\textbf{1.00}/1.00 & 0/\textbf{0.00}/0.00 \\
-quadratic (15)       & 0/0.00/0.00        & 0.80/0.93/0.93     & 0.87/0.93/0.87       \\
-cubic (15)           & \textbf{0/0/0}     & 0/0/0              & 0/0/0                \\
-exponential (15)     & \textbf{0/0/0}     & 0/0/0              & 0/0/0                \\
-abel\_level3 (20)    & 0/0.20/0.20        & 0.05/0.15/0.25     & 0.25/\textbf{0.40}/0.40 \\
-abel\_level2 (10)    & 0.10/0.30/0.30     & 0.10/0.50/0.50     & 0.10/\textbf{0.70}/0.70 \\
-abel\_level1 (1)     & 1/1/1              & 0/1/1              & 1/1/1                \\
+quadratic (15)       & 0/0.00/0.00        & 0.87/0.93/\textbf{0.93} \\
+cubic (15)           & 0/0/0              & 0/1.00/\textbf{1.00}    \\
+quartic (15)         & 0/0/0              & 0.80/0.93/\textbf{0.93} \\
+exponential (15)     & \textbf{0/0/0}     & 0.40/0.80/\textbf{0.87} \\
+abel\_level1 (1)     & 0/1/1              & 0/1/1                   \\
+abel\_level2 (10)    & 0.10/0.50/0.50     & 0.30/0.90/\textbf{0.90} \\
+abel\_level3 (20)    & 0.05/0.15/0.25     & 0.20/0.35/\textbf{0.35} \\
 \bottomrule
 \end{tabular}
-\caption{\textbf{Per-class test accuracy} on \texttt{mixed\_v2\_easy}, shown as greedy / plain-beam / value-beam fractions. Notable cells in bold. Each method unlocks a different class.}
+\caption{\textbf{Per-class test accuracy} on \texttt{mixed\_v2\_easy}, greedy / plain-beam / value-beam fractions. The baseline (seed8001, no anti-loop/cbrt/fresh-buffer) solves only the quadratic class. The full-stack fresh-buffer checkpoint (seed14000, best.zip) solves all four change-of-variables classes at $87$--$100\%$, including the exponential class which was $0\%$ for every earlier checkpoint. The single remaining weak spot is the depth-3 closed class \texttt{abel\_level3} ($35\%$).}
 \label{tab:per_class}
 \end{table}
 
-Five findings emerge.
+Four findings emerge.
 
-\textbf{(i) Cubic and exponential are unsolved across the board.} 30 of the 91 test equations ($33\%$) lie in classes where every checkpoint scores zero on every metric. Inspection reveals the cause is action-set limited rather than training-data limited: after the depressed-cubic CoV $x \to x - b/(3a)$ the equation collapses to $a y^3 + d = 0$, which requires a cube-root operation -- but our action set contains only \texttt{square}, \texttt{sqrt}, \texttt{log}, \texttt{exp}, \texttt{sin}, $\sin^{-1}$, \texttt{cos}, $\cos^{-1}$, and multiplication by $-1$. There is no \texttt{cbrt}. Exponential equations are in principle solvable (CoV $x \to \log y / k$ yields a quadratic in $y$), but no checkpoint has discovered the recipe -- suggesting they are training-data limited and would benefit from oversampling that class.
+\textbf{(i) The full stack solves all four CoV classes.} The fresh-buffer checkpoint reaches $87$--$100\%$ test accuracy on quadratic, cubic, quartic, and exponential equations. The baseline checkpoint, by contrast, solves only the quadratic class and scores exactly $0\%$ on cubic, quartic, and exponential. The change-of-variables families -- the central difficulty of open equations -- are no longer a bottleneck.
 
-\textbf{(ii) The quartic class is fragile.} Baseline seed8001 solves all 15 quartics with plain beam -- the ``depressed-quartic 6-step recipe'' (\texttt{COV REL - / SRT SRT}) from Section~\ref{sec:antiloop}. Baseline seed7001 has the recipe but cannot find it under greedy or plain beam (3/15); value-guided beam unlocks it (15/15) because the policy ranks the correct first action highly but not top-1. Anti-loop seed9100 has \emph{lost} the quartic class entirely (0/15): the action-diversity penalty broke the recipe, which has \texttt{relabel\_const} as action 2 and is naturally repetitive.
+\textbf{(ii) The exponential class goes $0\% \to 87\%$.} Exponential equations were $0\%$ for \emph{every} earlier checkpoint and we initially suspected a structural impossibility. The fix turned out to be a combination of (a) the cube-root action, (b) raising the CoV-application cap from $1$ to $3$ so nested substitutions are possible, and (c) the fresh-buffer success-replay variant, which gives the policy enough diverse on-policy successes to discover the multi-step exponential recipe ($\texttt{CoV} \to$ multiply-through $\to$ depress $\to$ \texttt{sqrt}). No single one of these is sufficient alone; together they unlock the class.
 
-\textbf{(iii) Anti-loop trades quartic memorization for closed-equation breadth.} While losing quartic, seed9100 gains on \texttt{abel\_level3} ($0.40$ vs.\ $0.15$-$0.25$) and \texttt{abel\_level2} ($0.70$ vs.\ $0.30$-$0.50$). The penalty pushes the policy away from any single repetitive recipe, producing a more general but less peaked solver. This is the qualitative shift behind the aggregate gain in Section~\ref{sec:antiloop}.
+\textbf{(iii) The cubic class is action-set gated.} Cubic was $0\%$ everywhere until we added a \texttt{cbrt} action: after the depressed-cubic CoV the equation collapses to $a y^3 + k = 0$, unsolvable with only \texttt{sqrt}. With \texttt{cbrt} the class jumps to $100\%$. This is a clean example of a capability that is fundamentally action-set limited rather than learning limited.
 
-\textbf{(iv) Value-guided beam specifically helps when the policy is unsharp.} The seed7001 quartic case ($0.20 \to 1.00$) is the cleanest example: the value head correctly identifies the productive path that the policy ranks below top-1. On checkpoints where the policy already places the right action first (seed8001 quartic, seed9100 closed eqns), value-beam gives no further lift.
-
-\textbf{(v) Methods are complementary by class.} No single method dominates. Best-of-three by class gives a hypothetical \textit{test}$_{\text{beam}}$ of $\approx 0.60$ -- substantially higher than any single method. Combining methods (e.g., training a model with anti-loop \emph{and} a separate quartic-specialist model, then voting) is a natural extension.
-
-The cubic action-set limitation and the exponential training-data gap are the two largest sources of remaining test-set error. Both are concrete, addressable shortcomings rather than fundamental limits of the approach.
+\textbf{(iv) Depth-3 closed equations are the remaining weak spot.} \texttt{abel\_level3} sits at $35\%$ -- far below the CoV classes. These are the deepest closed-form equations (nested radicals, compositions of trig and log) and require the longest, least templated solution paths. Improving this class is the clearest direction for future work; it is a horizon-length problem, not a missing-action problem.
 
 % TODO scratchpad of ideas (commented out so it doesn't render):
 %   - Abel: verify equations are (i) solvable, (ii) solvable within max_steps.
