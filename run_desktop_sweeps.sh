@@ -93,9 +93,35 @@ $PY -u train_abel.py \
 FRESH_PID=$!
 echo "  launched PID $FRESH_PID"
 
+sleep 60
+
+# ----------------------------------------------------------------------
+# 4) Cubic+exponential focused run — confirms the exp-class story on a
+#    clean run with ALL fixes (cbrt, max_cov_apps=3, pi_cov current-form
+#    using expand() + count_ops guard, fresh buffer).
+# ----------------------------------------------------------------------
+# Earlier cubic+exp runs were either pre-fix or hit the simplify() hang.
+# This is the clean ablation: 3 seeds, focused 1000-eqn cubic+exp set.
+# Expect cubic ~100% and exponential well above 0 (seed14000 on the mixed
+# set already reached exp 13/15; this isolates the two hard classes).
+echo "[4/4] 3-seed cubic+exp focused run (all fixes)"
+$PY -u train_abel.py \
+    --gen cubic_exp_focused --agent ppo-tree --action_space dynamic \
+    --Ntrain 3000000 \
+    --use_relabel_constants --use_success_replay --use_cov \
+    --use_cbrt \
+    --anti_loop_penalty 0.1 \
+    --sr_buffer_kind fresh \
+    --early_stop_patience 8 \
+    --eval_lite \
+    --base_seed 5000 --n_trials 3 --n_workers 3 --n_envs 1 \
+    > "$LOGDIR/cubic_exp_3seeds.log" 2>&1 &
+CUBEXP_PID=$!
+echo "  launched PID $CUBEXP_PID"
+
 echo ""
-echo "All sweeps launched. PIDs: easy=$EASY_PID large=$LARGE_PID fresh=$FRESH_PID"
-echo "Total cores in use: ~13 (5+5+3). Adjust --n_workers if you have fewer."
+echo "All sweeps launched. PIDs: easy=$EASY_PID large=$LARGE_PID fresh=$FRESH_PID cubexp=$CUBEXP_PID"
+echo "Total cores in use: ~16 (5+5+3+3). Adjust --n_workers if you have fewer."
 echo ""
 echo "Monitor with:"
 echo "  ps aux | grep multiprocessing-fork | grep -v grep | wc -l"
