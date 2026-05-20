@@ -404,6 +404,22 @@ Four findings emerge.
 %   - Action embeddings?
 %   - The smith and the wizard.
 
+\section{Limitations}
+\label{sec:limitations}
+We highlight the main limitations of this work, several of which double as concrete next steps.
+
+\textbf{Analytic, not learned, change-of-variables.} The CoV macroaction calls an analytic routine that pattern-matches the four template families and returns the exact substitution. The agent learns \emph{when} to invoke a CoV and how to compose it, but not the substitution itself. A fully generative $\pi_{\text{cov}}$ -- proposing substitutions for equations outside the four families -- remains future work; our earlier attempts to train it directly were too brittle to include here.
+
+\textbf{Single-seed headline.} The $0.80$ result is one seed (\texttt{seed14000}). We report a 3-seed sweep at the (weaker) flat-buffer configuration (range $0.41$--$0.62$) and a controlled buffer-variant comparison, but a 5-seed sweep at the full fresh-buffer configuration is still in progress. The claim we are confident in is the \emph{ordering} of configurations, not a precise mean.
+
+\textbf{Late-training drift.} Test accuracy peaks mid-training and degrades toward the end of the $3\text{M}$-step budget; the $0.80$ figure is from an early-stopped checkpoint, $0.28$ points above the final-step checkpoint. We do not yet understand the drift mechanism. Our reported numbers depend on checkpoint selection, which we make explicit.
+
+\textbf{Structural ceilings are real.} The cubic class was unsolvable until we added a cube-root action; analogous gaps may exist for equation families outside our four templates (e.g.\ quintics, which have no closed-form radical solution at all). The action set bounds the solvable class in a way that learning cannot overcome.
+
+\textbf{Depth-3 closed equations remain weak.} \texttt{abel\_level3} sits at $35\%$, far below the CoV classes. These require the longest solution paths; the bottleneck appears to be search horizon rather than a missing action.
+
+\textbf{Search at evaluation, not training.} Beam search is the dominant contributor to final accuracy, yet it is applied only at decode time -- the policy is trained for greedy rollouts. Integrating search into training (e.g.\ expert iteration / AlphaZero-style self-improvement) is the natural and, we believe, most promising direction beyond this paper.
+
 % Acknowledgements should only appear in the accepted version.
 \section*{Acknowledgements}
 

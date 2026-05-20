@@ -50,22 +50,26 @@ flat-buffer config.
 
 ---
 
-## 2. Per-class breakdown of the headline (seed10000)
+## 2. Per-class breakdown of the headline (seed14000 best.zip, test_beam=0.80)
 
 | Class | n | greedy | plain beam | value beam |
 |---|---|---|---|---|
-| cubic | 15 | 15/15 | 15/15 | 15/15 |
-| quartic | 15 | 14/15 | 15/15 | 15/15 |
-| quadratic | 15 | 10/15 | 12/15 | 15/15 |
+| quadratic | 15 | 13/15 | 14/15 | 14/15 (0.93) |
+| cubic | 15 | 0/15 | 15/15 | 15/15 (1.00) |
+| quartic | 15 | 12/15 | 14/15 | 14/15 (0.93) |
+| exponential | 15 | 6/15 | 12/15 | 13/15 (0.87) |
 | abel_level1 | 1 | 0/1 | 1/1 | 1/1 |
-| abel_level2 | 10 | 2/10 | 5/10 | 5/10 |
-| abel_level3 | 20 | 4/20 | 8/20 | 8/20 |
-| **exponential** | **15** | **0/15** | **0/15** | **0/15** |
+| abel_level2 | 10 | 3/10 | 9/10 | 9/10 (0.90) |
+| abel_level3 | 20 | 4/20 | 7/20 | 7/20 (0.35) |
+| Total | 91 | | | 73/91 = 0.80 |
 
-- Cubic class went 0% → 100% (cbrt action is the fix)
-- Quartic/quadratic class fully solved
-- Exponential class still 0%: ROOT CAUSE identified (see Section 4)
-- Closed-equation classes (abel_level2/3) partially solved (40-50%)
+- All four CoV classes solved at 87-100% (quadratic, cubic, quartic, exponential)
+- Exponential went 0% -> 87% -- was 0 on every earlier checkpoint. Unlocked
+  by cbrt + max_cov_apps=3 + fresh-buffer JOINTLY. seed14000 was trained
+  BEFORE the pi_cov current-form fix, so that fix was NOT required.
+- Cubic at 100% -- cbrt action is the structural fix.
+- abel_level3 (depth-3 closed eqns) at 35% -- the single remaining weak
+  spot; a search-horizon problem, not a missing-action problem.
 
 ---
 
