@@ -6,7 +6,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import logging
 import numpy as np
 from sympy import sympify, symbols, simplify, Eq, solve, powdenest, ratsimp
-from sympy import symbols, simplify, exp, log, Wild
+from sympy import symbols, simplify, exp, log, Wild, expand
 import re
 from gymnasium import spaces, Env
 from operator import add, sub, mul, truediv
@@ -18,8 +18,14 @@ from typing import Optional
 
 import signal
 import time
+from sympy import count_ops
 
 logger = logging.getLogger(__name__)
+
+# Pre-check ceiling for the expand() in _apply_cov. If the raw lhs - rhs has
+# more than this many ops, skip the expand-based current-form path (it could
+# be slow) and fall back to the main_eqn pattern match. count_ops is cheap.
+COV_EXPAND_OPS_LIMIT = 60
 
 letter_map = {i: chr(ord('a') + i - 1) for i in range(1, 27)}
 
@@ -564,15 +570,28 @@ class multiEqn(Env):
             lhs_s = sympify(lhs)
             rhs_s = sympify(rhs)
             main_s = sympify(self.main_eqn)
-            # Try the CURRENT transformed equation first (sp.expand(lhs - rhs)).
+            # Try the CURRENT transformed equation first (expand(lhs - rhs)).
             # This is critical for nested-CoV recipes: e.g. for exp eqns, the
             # agent applies CoV (x->log(x)) and then mul-by-x to get a quadratic;
             # pi_cov on main_eqn (which is the rational form a*x + b/x + c) would
             # return None, but pi_cov on the expanded current form (a*x^2 + c*x + b)
             # correctly detects the quadratic and returns the depression substitution.
+            # IMPORTANT: use expand(), NOT simplify(). simplify() can hang for
+            # minutes on cubic/exponential forms and does not reliably respond
+            # to the SIGALRM timeout (it gets stuck in SymPy C code). expand()
+            # is cheap, bounded, and sufficient for the polynomial / exp pattern
+            # matching that pi_cov_general performs.
+            #
+            # Belt-and-suspenders: a cheap count_ops() pre-check. If the raw
+            # lhs - rhs is already very large, skip the expand entirely (it
+            # could still be slow) and fall through to the main_eqn path.
+            # count_ops is fast and does not hang.
+            sub_expr = None
             try:
-                current_form = simplify(sympify(lhs_s - rhs_s))
-                sub_expr = self.pi_cov(current_form)
+                raw_form = sympify(lhs_s - rhs_s)
+                if count_ops(raw_form) <= COV_EXPAND_OPS_LIMIT:
+                    current_form = expand(raw_form)
+                    sub_expr = self.pi_cov(current_form)
             except Exception:
                 sub_expr = None
             if sub_expr is None:
