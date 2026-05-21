@@ -225,9 +225,19 @@ class AccuracyLoggingCallback(BaseCallback):
         self.log_interval = max(1, int(log_interval))
         self.algo_name = algo
 
-        # Create a unique directory for this run to save data
+        # Create a unique directory for this run to save data. The PID is
+        # included so parallel runs (a sweep) cannot collide on the same
+        # second-resolution timestamp and clobber each other's best_model.zip
+        # / accuracies.csv. A dataset tag is added for readability.
         timestamp = dt.now().strftime("%Y-%m-%d_%H-%M-%S")
-        dir_name = f"{self.algo_name}_{timestamp}"
+        ds_tag = ""
+        try:
+            dp = getattr(env, "dataset_path", None)
+            if dp:
+                ds_tag = os.path.basename(str(dp).rstrip("/")) + "_"
+        except Exception:
+            ds_tag = ""
+        dir_name = f"{self.algo_name}_{ds_tag}{timestamp}_{os.getpid()}"
         self.save_path = os.path.join("gemini", "cov", dir_name)
         os.makedirs(self.save_path, exist_ok=True)
 
@@ -275,6 +285,15 @@ class AccuracyLoggingCallback(BaseCallback):
             df = pd.DataFrame(data)
             filepath = os.path.join(self.save_path, "accuracies.csv")
             df.to_csv(filepath, index=False)
+
+            # Best-checkpoint: keep the model at its peak test_beam. pi_cov
+            # training tends to peak early then collapse, so the final-step
+            # model is usually not the best one.
+            if test_beam_acc > getattr(self, "_best_beam", -1.0):
+                self._best_beam = test_beam_acc
+                self.model.save(os.path.join(self.save_path, "best_model.zip"))
+                timed_print(f"[{self.algo_name}] new best test_beam={test_beam_acc:.3f}"
+                            f" -> best_model.zip")
 
         return True
 
@@ -811,7 +830,7 @@ def main(args):
                        verbose=args.verbose)
 
     # Callbacks
-    cb_ent = EntropyAnnealCallback(start=0.02, end=0.0, total_timesteps=args.Ntrain, by_rollout=True)
+    cb_ent = EntropyAnnealCallback(start=args.ent_start, end=args.ent_end, total_timesteps=args.Ntrain, by_rollout=True)
     cb_progress = ProgressBarCallback()
     cb_accuracy = AccuracyLoggingCallback(env, model, args.agent,
                                           log_interval=(args.log_interval or max(1, args.Ntrain // 10)))
@@ -819,8 +838,9 @@ def main(args):
 
     cb_replay = None
     if 'mem' in args.agent:
-        #cb_replay = SuccessReplayCallback(mix_ratio=0.5, batch_size=256, iters_per_rollout=10, capacity=20000, verbose=0)
-        cb_replay = SuccessReplayCallback(mix_ratio=0.80, batch_size=128, iters_per_rollout=40, capacity=10**5, verbose=0)
+        cb_replay = SuccessReplayCallback(
+            mix_ratio=args.sr_mix_ratio, batch_size=args.sr_batch_size,
+            iters_per_rollout=args.sr_iters, capacity=args.sr_capacity, verbose=0)
         callbacks.append(cb_replay)
 
     if args.curiosity not in ['None','none'] and 'tree' not in args.agent:
@@ -906,7 +926,20 @@ if __name__ == "__main__":
                              help='Number of steps to run for each environment per PPO update (rollout buffer size).')
     agent_group.add_argument('--ent_coef', type=float, default=0.00,
                              help='Entropy coefficient for PPO (initial value if annealing).')
+    agent_group.add_argument('--ent_start', type=float, default=0.02,
+                             help='EntropyAnneal start coefficient.')
+    agent_group.add_argument('--ent_end', type=float, default=0.0,
+                             help='EntropyAnneal end coefficient; a non-zero floor keeps exploration alive.')
     agent_group.add_argument('--curiosity', type=str, default='none')
+
+    # Success replay (only used by 'mem' agents)
+    sr_group = parser.add_argument_group('Success Replay')
+    sr_group.add_argument('--sr_mix_ratio', type=float, default=0.80,
+                          help='Fraction of each update drawn from the success buffer (the frac_from_buffer knob).')
+    sr_group.add_argument('--sr_batch_size', type=int, default=128)
+    sr_group.add_argument('--sr_iters', type=int, default=40,
+                          help='BC iterations per rollout from the success buffer.')
+    sr_group.add_argument('--sr_capacity', type=int, default=100000)
 
     # Logging
     log_group = parser.add_argument_group('Logging Settings')

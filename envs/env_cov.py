@@ -264,6 +264,7 @@ class covEnv(gym.Env):
         self.ep_obs = []
         self.ep_act = []
         self.cov = 0
+        self.base_op = 'IDENTITY'   # reset: a stale base_op must not leak across episodes
         self.depth = 0
         self.history = []
         self.last_op_id = -1
