@@ -443,6 +443,62 @@ class SuccessReplayCallback(BaseCallback):
             print(f"[SuccessReplay/{self.buffer_kind}] size={len(self.buf)} bc_steps={len(bc_losses)} "
                   f"bc_loss={np.mean(bc_losses):.4f} ent={np.mean(ents):.3f}")
 
+
+class MemProfileCallback(BaseCallback):
+    """Opt-in memory profiler (set env MEM_PROFILE=1). Every `every` env steps:
+    gc.collect(), then log RSS and a gc object-type histogram (counts, plus
+    total bytes held in ndarrays / torch Tensors). Writes to
+    logs/memprofile_<pid>.log. Stops training if RSS exceeds rss_cap_gb.
+    Deliberately avoids tracemalloc -- its per-allocation tracing is a ~15x
+    slowdown on this SymPy-heavy workload and its own buffers confound RSS."""
+    def __init__(self, every=4096, rss_cap_gb=9.0, verbose=0):
+        super().__init__(verbose)
+        self.every = int(every)
+        self.rss_cap_gb = float(rss_cap_gb)
+        self._path = os.path.join("logs", f"memprofile_{os.getpid()}.log")
+
+    def _rss_gb(self):
+        import resource
+        return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (1024 ** 3)
+
+    def _log(self, msg):
+        with open(self._path, "a") as f:
+            f.write(msg + "\n")
+
+    def _on_training_start(self) -> None:
+        self._log(f"=== mem profile start, pid {os.getpid()}, baseline RSS {self._rss_gb():.2f} GB ===")
+
+    def _on_step(self) -> bool:
+        if self.every <= 0 or self.num_timesteps % self.every != 0:
+            return True
+        import gc
+        from collections import Counter
+        gc.collect()
+        rss = self._rss_gb()
+        objs = gc.get_objects()
+        hist = Counter(type(o).__name__ for o in objs)
+        arr_bytes = arr_n = ten_bytes = ten_n = 0
+        for o in objs:
+            tn = type(o).__name__
+            if tn == "ndarray":
+                try:
+                    arr_bytes += int(o.nbytes); arr_n += 1
+                except Exception:
+                    pass
+            elif tn == "Tensor":
+                try:
+                    ten_bytes += o.element_size() * o.nelement(); ten_n += 1
+                except Exception:
+                    pass
+        self._log(f"\n--- step {self.num_timesteps}  RSS {rss:.2f} GB  objs={len(objs)}  "
+                  f"ndarray={arr_n}/{arr_bytes/1e6:.0f}MB  Tensor={ten_n}/{ten_bytes/1e6:.0f}MB ---")
+        self._log("  types: " + ", ".join(f"{k}={v}" for k, v in hist.most_common(18)))
+        if rss > self.rss_cap_gb:
+            self._log(f"=== RSS {rss:.2f} GB > cap {self.rss_cap_gb}, stopping training ===")
+            return False
+        return True
+
+
 # ==========================
 # Env / agent factories
 # ==========================
@@ -1227,6 +1283,8 @@ def run_trial(
     )
     #cb_list: List[BaseCallback] = [cb_main, ProgressBarCallback()]
     cb_list: List[BaseCallback] = [cb_main]
+    if os.environ.get("MEM_PROFILE"):
+        cb_list.append(MemProfileCallback(every=int(os.environ.get("MEM_PROFILE_EVERY", "4096"))))
     if use_success_replay:
         cb_list.append(
             SuccessReplayCallback(

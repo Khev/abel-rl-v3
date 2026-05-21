@@ -213,3 +213,75 @@ applies retroactively to every existing checkpoint.
   (Untested.)
 - Action decomposition (op-head + term-pointer pointer) — ChatGPT's #2.
   Bigger refactor, deferred to next paper.
+
+---
+
+# Session findings — 2026-05-20
+
+## The reboot was a RAM-exhaustion kernel panic
+
+The 2026-05-20 reboot was NOT the documented zombie-process issue and NOT the
+action cache. The panic log (`/Library/Logs/DiagnosticReports/*.panic`):
+watchdog timeout, memory compressor at 117% of limit, 80 swapfiles — a
+system-wide memory-pressure death spiral.
+
+Caches are innocent: `make_actions_cache` is hard-capped at 10k entries
+(~5 MB/env); SymPy's cache is bounded (`SYMPY_CACHE_SIZE=1000`).
+
+Confirmed root cause: a single `train_abel.py` worker on the **`--use_cov`
+path** balloons to 13+ GB, growing ~16 GB/h with no plateau — observed
+directly on a fullstack replica seed (sibling seed stayed ~1 GB, so it is
+policy-dependent). Almost certainly `pi_cov_general` retaining giant SymPy
+expressions. One such worker + the abel4 decoder's 6 workers = 32 GB gone.
+**Open CoV runs must be RSS-monitored and never left unattended until this
+leak is fixed.** Closed-equation runs do NOT show the leak.
+
+## Closed-equation learning has regressed in the current env
+
+While re-running the Fig-2 closed sweep, new `abel_level3/ppo-tree` runs
+tracked ~2-3x below the historical runs at equal steps:
+
+| era | coverage |
+|---|---|
+| Sept 2025 env (seed7001/7006/8001…) | 0.84-0.90 by 1M, ~0.98 asymptote |
+| current env (seed7000, May-17, independent of the sweep) | 0.74 at 2M |
+
+`env_multi_eqn.py` was untouched Sept 2025 → May 2026, then changed in a
+9-commit May-2026 CoV burst (use_cov plumbing, anti-loop, value-beam, cbrt,
+`_apply_cov` fixes, "env/forward speedups"). One of those regressed *closed*
+learning despite `use_cov=False`. NOT bisected — prime suspects: the
+`integer_encoding_1d` fix (changed obs encoding for all equations) and
+`e38b8f9` "env/forward speedups". Not cbrt (appended at end of action set,
+indices preserved).
+
+**Decision:** the Fig-2 rerun was abandoned. The existing `closed-equations.png`
+(built from the valid Sept-2025 runs) stands; rerunning on the regressed env
+would only downgrade the paper. The regression invalidates nothing — Sept
+closed runs and May open runs are both valid as-is. If the open/mixed sweep
+is ever rerun, fix this regression first (mixed_v2 datasets contain the
+abel_level1/2/3 closed classes).
+
+## CoV memory leak — root-caused and FIXED
+
+The `--use_cov` worker blow-up (the real cause of the RAM panic) was traced.
+It is NOT `pi_cov_general` retaining expressions and NOT the action/SymPy
+caches (both bounded). The env-only repro (`diag_pi_cov_leak.py`) ran 250
+CoV-heavy episodes dead flat at 0.68 GB — the env core is clean.
+
+Real cause: `step()` wraps every step in a wall-clock `setitimer` timeout, but
+`_apply_cov` installed its *own* SIGALRM + `alarm(3)` and then
+`finally: signal.alarm(0)` **cancelled the timer entirely**. So everything
+after a CoV call — the unguarded `simplify` in `_check_eqn_solved_local`, the
+observation encoding — ran with no timeout. A pathological CoV expression
+there recurses for minutes (a `sample` of a stuck worker showed deep recursive
+SymPy, 0 steps progress in 92 min) and RSS balloons. Policy/seed-dependent
+because only some policies learn to reach such expressions.
+
+Fix (`envs/env_multi_eqn.py`): `step()`'s timeout is now the sole owner —
+`_apply_cov` no longer touches signals; `TimeoutException` subclasses
+`BaseException` so the CoV-path `except Exception` handlers cannot swallow it;
+`step_timeout` 0.5→3.0 s; plus a cheap `count_ops>250` per-step guard.
+Verified: 6 parallel `--use_cov` seeds (incl. the demonstrated leaker, seed
+38000) ran 65 min — max worker RSS 1.06 GB, vs 5.5 GB before. A new opt-in
+`MemProfileCallback` (env `MEM_PROFILE=1`) was added to `train_abel.py` for
+future memory diagnostics. Fix is uncommitted as of 2026-05-20.

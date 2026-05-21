@@ -110,7 +110,10 @@ def pi_cov_general(main_eqn):
     return None
 
 
-class TimeoutException(Exception):
+class TimeoutException(BaseException):
+    # Subclasses BaseException (not Exception) so the many `except Exception`
+    # handlers on the CoV path cannot silently swallow a step() timeout --
+    # only step()'s explicit `except TimeoutException` catches it.
     pass
 
 def timeout_handler(signum, frame):
@@ -148,7 +151,8 @@ class multiEqn(Env):
                  #pi_cov = pi_cov_quadratic,
                  pi_cov = pi_cov_general,
                  max_cov_apps = 3,  # was 1; bumped to allow nested CoV (e.g. exp -> quadratic depression). See trace_exp.py for the failure mode at max=1.
-                 step_timeout: float = 0.5,
+                 max_eqn_ops = 250,  # count_ops ceiling per step; over this the episode aborts (runaway-expression guard)
+                 step_timeout: float = 3.0,
                  train_eqns=None,
                  anti_loop_penalty: float = 0.0,
                  use_cbrt: bool = True,
@@ -195,6 +199,7 @@ class multiEqn(Env):
         self.cov_inv = []                       # stack of inverse maps (x_prev in terms of current x)
         self.main_eqn_original_cov = None       # remember original main_eqn before first CoV
         self.max_cov_apps = int(max_cov_apps)     # <-- and store it
+        self.max_eqn_ops = int(max_eqn_ops)       # runaway-expression guard ceiling
 
         # For relabel constants
         self.map_constants = None
@@ -403,11 +408,32 @@ class multiEqn(Env):
         else:
             lhs_new, rhs_new = operation(lhs_old, term), operation(rhs_old, term)
 
+        # Runaway-expression guard. A degenerate action loop (e.g. alternating
+        # multiply/expand, which the anti-loop penalty does not catch) can
+        # compound lhs/rhs into a huge expression; the next unguarded SymPy op
+        # (simplify in the solved-check, observation encoding) then recurses for
+        # minutes and balloons RSS -- this is the --use_cov "memory leak".
+        # count_ops is cheap and bounded: if we blow past the ceiling, discard
+        # the monster and end the episode as an invalid step.
+        eqn_blew_up = False
+        try:
+            if count_ops(lhs_new) + count_ops(rhs_new) > self.max_eqn_ops:
+                eqn_blew_up = True
+        except Exception:
+            pass
+        if eqn_blew_up:
+            logger.warning(f"step: expression blow-up after "
+                           f"{operation_names.get(operation, '?')} "
+                           f"(> {self.max_eqn_ops} ops) -- aborting episode")
+            lhs_new, rhs_new = lhs_old, rhs_old
+
         obs_new, _ = self.to_vec(lhs_new, rhs_new)
 
         # Book keeping with variable-aware checks
         is_valid_eqn, lhs_new, rhs_new = self._check_valid_eqn_local(lhs_new, rhs_new)
         is_solved = self._check_eqn_solved_local(lhs_new, rhs_new)
+        if eqn_blew_up:
+            is_valid_eqn, is_solved = False, False   # force episode end, invalid penalty
 
         reward = self.find_reward(lhs_old, rhs_old, lhs_new, rhs_new, is_valid_eqn, is_solved)
 
@@ -559,11 +585,11 @@ class multiEqn(Env):
         if not callable(getattr(self, 'pi_cov', None)):
             logger.warning("pi_cov is not callable")
             return lhs, rhs
-        
-        # Set up timeout
-        signal.signal(signal.SIGALRM, timeout_handler)
-        signal.alarm(timeout_seconds)
-        
+
+        # NOTE: no signal handling here. The enclosing step() owns a single
+        # wall-clock timer for the whole step; _apply_cov must NOT install or
+        # cancel its own alarm (doing so left the rest of step_base unprotected
+        # and was the cause of the --use_cov memory blow-up).
         try:
             v = self.solve_var
             # Ensure SymPy objects
@@ -609,16 +635,13 @@ class multiEqn(Env):
             inv_expr = sympify(sub_expr)  # Forward map: x_old := sub_expr(x_new)
             self.cov_inv.append(inv_expr)
             return lhs2, rhs2
-        except TimeoutException:
-            #logger.warning(f"_apply_cov timed out after {timeout_seconds} seconds")
-            return lhs, rhs
         except Exception as e:
             # SymPy can raise HeuristicGCDFailed, PolynomialError, ZeroDivisionError,
             # CoercionFailed, etc. inside simplify/cancel during weird substitutions.
             # Treat any such failure as a no-op CoV so the worker survives.
+            # (A step() timeout raises TimeoutException, a BaseException, so it
+            # is NOT caught here -- it propagates to step() as intended.)
             return lhs, rhs
-        finally:
-            signal.alarm(0)  # Disable the alarm
 
 
     # ──────────────────────────────────────────────────────────────────────────
