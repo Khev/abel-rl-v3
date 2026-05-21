@@ -564,7 +564,8 @@ def eval_avg_reward(env, model, n_episodes=20, max_steps=5, deterministic=True, 
             temp_env = covEnv(
                 eqn, env.term_bank, max_depth=env.max_depth, step_penalty=env.step_penalty,
                 f_penalty=env.f_penalty, hist_len=env.hist_len, multi_eqn=False, use_curriculum=False,
-                state_rep=env.state_rep
+                state_rep=env.state_rep,
+                dataset_path=getattr(env, "dataset_path", None),   # else feature_dict mismatches
             )
             totals = []
             for i in range(n_episodes):
@@ -606,7 +607,8 @@ def test_greedy(env, model, max_steps=10, test_eqns=None):
             temp_env = covEnv(
                 eqn, env.term_bank, max_depth=env.max_depth, step_penalty=env.step_penalty,
                 f_penalty=env.f_penalty, hist_len=env.hist_len, multi_eqn=False, use_curriculum=False,
-                state_rep=env.state_rep
+                state_rep=env.state_rep,
+                dataset_path=getattr(env, "dataset_path", None),   # else feature_dict mismatches
             )
             obs, info = temp_env.reset(seed=SEED)
             done, truncated = False, False
@@ -649,7 +651,8 @@ def test_10(env, model, n_trials=10, max_steps=10, test_eqns=None):
             temp_env = covEnv(
                 eqn, env.term_bank, max_depth=env.max_depth, step_penalty=env.step_penalty,
                 f_penalty=env.f_penalty, hist_len=env.hist_len, multi_eqn=False, use_curriculum=False,
-                state_rep=env.state_rep
+                state_rep=env.state_rep,
+                dataset_path=getattr(env, "dataset_path", None),   # else feature_dict mismatches
             )
             success_any = False
             best_delta = -1e9

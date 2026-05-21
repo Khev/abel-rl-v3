@@ -1282,7 +1282,10 @@ def make_feature_dict_integer_1d_multi(train_eqns, test_eqns):
     # Special constants & numbers
     special_constants = [-1, I, E, pi, zoo]
     small_integers = list(range(4))  # e.g., 0,1,2,3
-    all_symbols = list(free_symbols) + special_constants + small_integers
+    # sorted() not list(): a raw set iterates in process-random order (Python
+    # hash randomization), which would give every run a different symbol->ID
+    # map and make saved models un-reloadable. Sorting by name is stable.
+    all_symbols = sorted(free_symbols, key=str) + special_constants + small_integers
 
     # Initialize feature dictionary
     x = symbols('x')
