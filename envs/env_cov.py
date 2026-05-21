@@ -181,7 +181,11 @@ class covEnv(gym.Env):
         # actions
         self.ops = ["ADD", "SUB", "MUL", "DIV", "STOP"]
         self.base_op = 'IDENTITY'
-        self.actions = [(op, t) for op in self.ops[:-1] for t in self.term_bank] + [("STOP", None)]
+        # LOGX: unary op, f(x) = log(x) -- needed for the exponential CoV
+        # (a*e^x + b*e^-x + c  ->  a*x + b/x + c). Appended last so existing
+        # action indices are unchanged.
+        self.actions = [(op, t) for op in self.ops[:-1] for t in self.term_bank] + \
+                       [("STOP", None), ("LOGX", None)]
         self.action_space = spaces.Discrete(len(self.actions))
 
         # data
@@ -298,6 +302,13 @@ class covEnv(gym.Env):
     def apply_op_to_cov(self, op, tau):
         if op == "DIV" and sp.simplify(tau) == 0:
             return False
+        if op == "LOGX":
+            # unary base op: f(x) = log(x). cov is unused (finalize ignores it).
+            self.base_op = "LOGX"
+            self.cov = 0
+            self.history.append((op, None))
+            self.depth += 1
+            return True
         if self.depth == 0:
             self.base_op = op
             self.cov = tau
@@ -348,7 +359,8 @@ class covEnv(gym.Env):
             self.action_history = self.action_history[1:] + [action_idx]
 
         if operation == "STOP" or self.depth >= self.max_depth:
-            op_dict = {'ADD': add, 'SUB': sub, 'MUL': mul, 'DIV': truediv, 'IDENTITY': custom_identity}
+            op_dict = {'ADD': add, 'SUB': sub, 'MUL': mul, 'DIV': truediv,
+                       'IDENTITY': custom_identity, 'LOGX': lambda x, cov: sp.log(x)}
             self.cov = op_dict[self.base_op](x, self.cov)
             if self.cov == 0:
                 self.cov = x

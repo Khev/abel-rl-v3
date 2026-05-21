@@ -710,6 +710,8 @@ def _beam_search_one(eqn_env, model, width, max_depth):
             # Evaluate this path's f(x) and delta
             if base_op is None:
                 f = xsym  # no actions => identity sub, delta=0
+            elif base_op == "LOGX":
+                f = sp.log(xsym)            # unary op: f(x) = log(x)
             else:
                 f = _BEAM_OPS[base_op](xsym, cov_inner)
             try:
@@ -742,10 +744,17 @@ def _beam_search_one(eqn_env, model, width, max_depth):
                     # delta is already captured above. Skip expansion.
                     continue
                 try:
-                    if base_op is None:
+                    if op == "LOGX":
+                        # unary base op: f(x) = log(x); cov_inner unused
+                        new_base_op = "LOGX"
+                        new_cov_inner = sp.Integer(0)
+                    elif base_op is None:
                         # first action: pin base_op and set cov_inner = tau
                         new_base_op = op
                         new_cov_inner = sp.sympify(tau)
+                    elif base_op == "LOGX":
+                        new_base_op = "LOGX"
+                        new_cov_inner = sp.Integer(0)
                     else:
                         new_base_op = base_op
                         new_cov_inner = sp.simplify(_BEAM_OPS[op](cov_inner, tau))
@@ -783,6 +792,83 @@ def beam_search(env, model, width=3, max_depth=3, test_eqns=None):
         if best_delta > 0:
             success_count += 1
     return success_count / len(test_eqns)
+
+
+# ---------------------------------------------------------------------
+# Expert demonstrations (RL-from-demonstrations): seed the success-replay
+# buffer with the known-correct CoV substitution traces.
+# ---------------------------------------------------------------------
+def _read_lines(path, keep_blank=False):
+    out = []
+    with open(path) as f:
+        for ln in f:
+            if ln.startswith("#"):
+                continue
+            s = ln.rstrip("\n")
+            if s.strip() or keep_blank:
+                out.append(s)
+    return out
+
+
+def _trace_to_action_indices(trace, actions):
+    """Convert 'SUB:f DIV:3 DIV:a STOP' into covEnv action indices."""
+    idxs = []
+    for tok in trace.split():
+        if ":" not in tok:          # unary actions: STOP, LOGX
+            op, term = tok, None
+        else:
+            op, t = tok.split(":", 1)
+            term = sp.sympify(t)
+        match = None
+        for i, (aop, aterm) in enumerate(actions):
+            if aop != op:
+                continue
+            if (term is None and aterm is None) or \
+               (term is not None and aterm is not None and aterm == term):
+                match = i
+                break
+        if match is None:
+            raise ValueError(f"trace token '{tok}' has no matching covEnv action")
+        idxs.append(match)
+    return idxs
+
+
+def collect_expert_demos(dataset_path, term_bank, max_depth, step_penalty,
+                         f_penalty, hist_len, state_rep):
+    """Run covEnv through each train equation's expert trace; return the
+    (traj_obs, traj_act) episodes for the ones that solve. One covEnv is
+    reused -- its feature_dict matches the training env (same dataset_path)."""
+    eqns   = _read_lines(f"{dataset_path}/train_eqns.txt")
+    traces = _read_lines(f"{dataset_path}/train_traces.txt", keep_blank=True)
+    if len(eqns) != len(traces):
+        raise ValueError(f"train_eqns/train_traces length mismatch: "
+                         f"{len(eqns)} vs {len(traces)}")
+    env = covEnv(main_eqn=sp.sympify(eqns[0]), term_bank=term_bank,
+                 max_depth=max_depth, step_penalty=step_penalty,
+                 f_penalty=f_penalty, hist_len=hist_len, multi_eqn=False,
+                 use_curriculum=False, state_rep=state_rep,
+                 dataset_path=dataset_path)
+    demos, n_ok, n_fail = [], 0, 0
+    for eqn_s, trace in zip(eqns, traces):
+        trace = trace.strip()
+        if not trace:
+            continue
+        try:
+            env.main_eqn = sp.sympify(eqn_s)
+            env.reset()                       # multi_eqn=False -> keeps main_eqn
+            idxs = _trace_to_action_indices(trace, env.actions)
+            info = {}
+            for ai in idxs:
+                _, _, _, _, info = env.step(ai)
+            if info.get("success"):
+                demos.append((info["traj_obs"], info["traj_act"]))
+                n_ok += 1
+            else:
+                n_fail += 1
+        except Exception:
+            n_fail += 1
+    return demos, n_ok, n_fail
+
 
 # ---------------------------------------------------------------------
 # Train / Save
@@ -842,6 +928,39 @@ def main(args):
             mix_ratio=args.sr_mix_ratio, batch_size=args.sr_batch_size,
             iters_per_rollout=args.sr_iters, capacity=args.sr_capacity, verbose=0)
         callbacks.append(cb_replay)
+
+    # RL-from-demonstrations: pre-seed the success buffer with expert traces.
+    if getattr(args, "seed_demos", False) and cb_replay is not None and args.dataset_path:
+        demos, n_ok, n_fail = collect_expert_demos(
+            args.dataset_path, term_bank, args.max_depth, args.step_penalty,
+            args.f_penalty, args.hist_len, state_rep)
+        for traj_obs, traj_act in demos:
+            cb_replay.buf.add_episode(traj_obs, traj_act)
+        print(f"[seed_demos] seeded buffer with {n_ok} expert demos "
+              f"({n_fail} traces failed to solve); buffer size = {len(cb_replay.buf)}")
+
+        # BC pretraining: imitate the demos to convergence BEFORE PPO, so the
+        # policy starts good instead of being churned by PPO from step 0.
+        if args.bc_pretrain_iters > 0 and len(cb_replay.buf) > 0:
+            cb_replay.model = model        # enable _supervised_update pre-learn()
+            last = 0.0
+            for it in range(args.bc_pretrain_iters):
+                ob, ac = cb_replay.buf.sample(cb_replay.batch_size)
+                last, _ = cb_replay._supervised_update(ob, ac)
+                if it % 2000 == 0:
+                    print(f"[bc_pretrain] iter {it:6d}  bc_loss={last:.4f}", flush=True)
+            print(f"[bc_pretrain] done {args.bc_pretrain_iters} iters, "
+                  f"final bc_loss={last:.4f}", flush=True)
+            # Evaluate + save the pure BC-pretrained policy BEFORE any PPO,
+            # so its true quality is recorded (PPO tends to erode it).
+            _tg = test_greedy(env, model, max_steps=5, test_eqns=env.test_eqns)
+            _tb = beam_search(env, model, test_eqns=env.test_eqns)
+            print(f"[bc_pretrain] post-pretrain eval: "
+                  f"test_greedy={_tg:.3f}  test_beam={_tb:.3f}", flush=True)
+            try:
+                model.save(os.path.join(cb_accuracy.save_path, "bc_pretrained.zip"))
+            except Exception as _e:
+                print(f"[bc_pretrain] save warning: {_e}", flush=True)
 
     if args.curiosity not in ['None','none'] and 'tree' not in args.agent:
         #irs = get_intrinsic_reward(args.curiosity, env)
@@ -940,6 +1059,10 @@ if __name__ == "__main__":
     sr_group.add_argument('--sr_iters', type=int, default=40,
                           help='BC iterations per rollout from the success buffer.')
     sr_group.add_argument('--sr_capacity', type=int, default=100000)
+    sr_group.add_argument('--seed_demos', action='store_true',
+                          help='Pre-seed the success buffer with expert CoV traces (RL-from-demonstrations).')
+    sr_group.add_argument('--bc_pretrain_iters', type=int, default=0,
+                          help='Supervised BC pretraining iterations on the expert demos before PPO (0 = off).')
 
     # Logging
     log_group = parser.add_argument_group('Logging Settings')
