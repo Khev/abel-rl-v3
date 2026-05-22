@@ -30,6 +30,8 @@ import torch.nn as nn
 from collections import defaultdict
 from envs.env_cov import covEnv
 
+torch.set_num_threads(1)   # 1 thread/process -> no oversubscription when 8 run in parallel
+
 DATASET = sys.argv[1] if len(sys.argv) > 1 else "equation_templates/cov_large"
 EPOCHS  = int(sys.argv[2]) if len(sys.argv) > 2 else 600
 SEED    = int(sys.argv[3]) if len(sys.argv) > 3 else 0
@@ -243,7 +245,7 @@ for ep in range(1, EPOCHS + 1):
                 + ce(cl.reshape(-1, 7), CPStr[idx].reshape(-1)))
         opt.zero_grad(); loss.backward(); opt.step()
         tot += loss.item()
-    if ep % 20 == 0 or ep == 1:
+    if ep % 40 == 0 or ep == 1:
         acc, fam_ok = evaluate()
         if acc > best:
             best = acc
