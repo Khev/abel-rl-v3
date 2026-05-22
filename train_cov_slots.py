@@ -203,5 +203,6 @@ acc, fam_ok = evaluate()
 print(f"\nFINAL (best checkpoint) test exact-substitution accuracy: {best:.3f}")
 for k, v in sorted(fam_ok.items()):
     print(f"  {k:22s} {v[0]:3d}/{v[1]:3d}  {v[0]/v[1]:.3f}")
-torch.save(model.state_dict(), "gemini/cov/pi_cov_slots.pt")
-print("saved -> gemini/cov/pi_cov_slots.pt")
+_save = f"gemini/cov/pi_cov_slots_s{SEED}.pt"
+torch.save(model.state_dict(), _save)
+print(f"saved -> {_save}")
