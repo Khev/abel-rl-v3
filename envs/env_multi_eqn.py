@@ -55,7 +55,7 @@ operation_names[cov_action_placeholder] = 'cov'
 
 a, b, c, x = symbols('a b c x')
 def pi_cov_quadratic(main_eqn):
-    poly = (simplify(main_eqn)).as_poly(x)
+    poly = (expand(main_eqn)).as_poly(x)   # expand, not simplify: simplify can hang (trigsimp)
     if poly is None or poly.degree() != 2:
         return None
     A, B = poly.all_coeffs()[0], poly.all_coeffs()[1]
@@ -468,7 +468,7 @@ class multiEqn(Env):
                     if inv is not None:
                         substituted = inv.subs(self.solve_var, rhs_unw)
                         try:
-                            rhs_unw = simplify(substituted)
+                            rhs_unw = expand(substituted)   # expand, not simplify: simplify can hang (trigsimp)
                         except Exception:
                             # SymPy heuristic-GCD/poly failures: fall back to unsimplified.
                             rhs_unw = substituted
@@ -632,9 +632,13 @@ class multiEqn(Env):
             if sub_expr is None:
                 #logger.warning("pi_cov returned None")
                 return lhs, rhs
-            lhs2 = simplify(lhs_s.subs(v, sub_expr))
-            rhs2 = simplify(rhs_s.subs(v, sub_expr))
-            main2 = simplify(main_s.subs(v, sub_expr))
+            # expand, NOT simplify: simplify() on the post-substitution form
+            # (e.g. exp(log(x)) terms) recurses into trigsimp/exptrigsimp and
+            # hangs in SymPy internals, past the SIGALRM step-timeout. This was
+            # the open-equation no-output hang.
+            lhs2 = expand(lhs_s.subs(v, sub_expr))
+            rhs2 = expand(rhs_s.subs(v, sub_expr))
+            main2 = expand(main_s.subs(v, sub_expr))
             if self.main_eqn_original_cov is None:
                 self.main_eqn_original_cov = self.main_eqn
             self.main_eqn = main2
