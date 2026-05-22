@@ -74,7 +74,13 @@ def pi_cov_general(main_eqn):
 
     Returns None if no supported pattern is detected.
     """
-    s = simplify(main_eqn)
+    # expand(), NOT simplify(): simplify() recurses into trigsimp/exptrigsimp
+    # and can hang indefinitely on messy transformed equations -- stuck in
+    # SymPy internals, past the SIGALRM step-timeout. expand() is safe and is
+    # sufficient here: as_poly() and the exp Wild-match both work on the
+    # expanded form. (This was the cause of open-equation runs producing no
+    # output -- a worker invoking CoV would hang forever.)
+    s = expand(main_eqn)
 
     # ----- Polynomial cases (deg = 2,3,4): use shift to kill the next-highest term
     poly = s.as_poly(x)
@@ -152,7 +158,7 @@ class multiEqn(Env):
                  pi_cov = pi_cov_general,
                  max_cov_apps = 3,  # was 1; bumped to allow nested CoV (e.g. exp -> quadratic depression). See trace_exp.py for the failure mode at max=1.
                  max_eqn_ops = 250,  # count_ops ceiling per step; over this the episode aborts (runaway-expression guard)
-                 step_timeout: float = 3.0,
+                 step_timeout: float = 0.5,  # abort slow sympy steps fast; 3.0 wasted ~6x compute per bad step (the straggler cause). The leak is fixed structurally (BaseException + no _apply_cov signal-cancel), not by this value.
                  train_eqns=None,
                  anti_loop_penalty: float = 0.0,
                  use_cbrt: bool = True,
