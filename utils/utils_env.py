@@ -710,8 +710,10 @@ def sympy_expression_to_list(expr, feature_dict, max_length):
             # MUST be looked up here — otherwise the `is_Atom` branch below silently
             # drops them, collapsing equations like `2*b*x` and `4*b*x` to the same
             # encoding.
+            # look up only -- never mutate feature_dict here (lazy assignment
+            # made the encoding process-dependent). make_feature_dict now
+            # contains every numeric atom in the dataset.
             elements[index] = feature_dict.get(node, len(feature_dict))
-            feature_dict[node] = elements[index]
             index += 1
         elif hasattr(node, "is_Atom") and node.is_Atom:
             continue  # Truly opaque atoms (no entry, no encoding)
@@ -1279,13 +1281,18 @@ def make_feature_dict_integer_1d_multi(train_eqns, test_eqns):
     for eqn in train_eqns + test_eqns:
         free_symbols.update(eqn.free_symbols)
 
-    # Special constants & numbers
+    # Special constants
     special_constants = [-1, I, E, pi, zoo]
-    small_integers = list(range(4))  # e.g., 0,1,2,3
+    # EVERY numeric atom that appears in the data, so the encoder never has to
+    # lazily assign an ID at encode time -- that mutation made the feature_dict
+    # (and hence saved models) process-dependent.
+    numbers = set(range(4))
+    for eqn in train_eqns + test_eqns:
+        numbers.update(eqn.atoms(Number))
     # sorted() not list(): a raw set iterates in process-random order (Python
-    # hash randomization), which would give every run a different symbol->ID
-    # map and make saved models un-reloadable. Sorting by name is stable.
-    all_symbols = sorted(free_symbols, key=str) + special_constants + small_integers
+    # hash randomization); sorting by name keeps the symbol->ID map stable.
+    all_symbols = (sorted(free_symbols, key=str) + special_constants
+                   + sorted(numbers, key=str))
 
     # Initialize feature dictionary
     x = symbols('x')

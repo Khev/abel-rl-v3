@@ -38,7 +38,9 @@ from envs.env_cov import covEnv
 DATASET = sys.argv[1] if len(sys.argv) > 1 else "equation_templates/cov_large"
 EPOCHS  = int(sys.argv[2]) if len(sys.argv) > 2 else 600
 SEED    = int(sys.argv[3]) if len(sys.argv) > 3 else 0
-N_AUG   = 20          # random symbol-renamed copies of each train equation
+N_AUG   = int(sys.argv[4]) if len(sys.argv) > 4 else 20   # symbol-renamed copies
+HIDDEN  = int(sys.argv[5]) if len(sys.argv) > 5 else 256
+LR      = float(sys.argv[6]) if len(sys.argv) > 6 else 1e-3
 BATCH   = 256
 
 x = sp.Symbol("x")
@@ -147,8 +149,8 @@ te = [example(e) for e in test_raw]
 teX = torch.tensor(np.stack([t[0] for t in te]))
 te_slots_true = [slots_of(e) for e in test_raw]
 
-model = SlotModel(IN_DIM)
-opt = torch.optim.Adam(model.parameters(), lr=1e-3)
+model = SlotModel(IN_DIM, hidden=HIDDEN)
+opt = torch.optim.Adam(model.parameters(), lr=LR)
 ce = nn.CrossEntropyLoss(ignore_index=-1)
 
 
