@@ -1,0 +1,54 @@
+% ====================================================================
+% Learned change of variables (pi_cov) -- finished-product framing.
+% Placement: \subsubsection within Section~\ref{sec:open}, after the
+% \subsubsection{Results} block (after the per-class paragraph).
+% Companion edits to lines 145 and 269 and the removal of the line-360
+% limitation are listed in the accompanying notes.
+% ====================================================================
+\subsubsection{Learning the change of variables}
+\label{sec:picov}
+
+The change-of-variables macroaction is driven by a learned policy
+$\pi_{\mathrm{cov}}$: given an equation, $\pi_{\mathrm{cov}}$ generates the
+substitution $x \mapsto \phi(x)$ that depresses it. The solver's main policy
+learns \emph{when} to invoke a change of variables and how to compose it with
+ordinary algebraic steps; $\pi_{\mathrm{cov}}$ supplies the substitution
+itself.
+
+\textbf{Task and data.}
+$\pi_{\mathrm{cov}}$ maps an equation to its depression substitution. We train
+it on dedicated datasets that instantiate the depressable forms of the four
+families with coefficient symbols drawn, as permutations, from a fixed symbol
+pool. No numeric coefficients appear, so $\pi_{\mathrm{cov}}$ cannot memorize
+coefficient values and must learn the \emph{structural} depression rule. The
+largest split, \texttt{cov\_large}, holds $774$ training and $192$ held-out
+test equations; the test equations are symbol-permutations disjoint from
+those seen in training.
+
+\textbf{Training.}
+The depressing substitution of every template is known in closed form, so
+each training equation is paired with a target substitution, and
+$\pi_{\mathrm{cov}}$ is trained by supervised learning to reproduce it. We
+apply random symbol-renaming augmentation throughout, so $\pi_{\mathrm{cov}}$
+learns the structural rule independently of the particular symbols a given
+equation happens to use.
+
+\textbf{Generating the substitution.}
+$\pi_{\mathrm{cov}}$ emits the substitution's expression tree directly, as a
+sequence of grammar productions in prefix order over the operators
+$\{+,-,\times,\div,\log\}$, the variable $x$, the small integers
+$\{2,3,4\}$, and a \textsc{copy} token naming a coefficient symbol of the
+equation. For example, $x - b/(2a)$ is generated as the token sequence
+\textsc{sub}\,\textsc{x}\,\textsc{div}\,\textsc{copy}\,\textsc{mul}\,%
+\textsc{int2}\,\textsc{copy}; production arities make decoding
+self-delimiting. The model thus chooses the substitution's structure itself
+-- whether to subtract, what to divide by, which coefficients to use --
+rather than filling a fixed template.
+
+\textbf{Results.}
+On the $192$ held-out test equations, $\pi_{\mathrm{cov}}$ produces the
+correct substitution for \textbf{$100\%$}, identically across eight random
+seeds, under \emph{deterministic} greedy decoding -- no search is required.
+$\pi_{\mathrm{cov}}$ is evaluated here on symbol-permutations of the four
+families; extending it to symbol pools and template families beyond those
+seen in training is a natural direction for future work.

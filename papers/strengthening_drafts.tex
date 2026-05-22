@@ -1,0 +1,43 @@
+% ======================================================================
+% DRAFT strengthening content for review + placement. Not yet in main_v1.
+% (1) frontier-comparison table  -- suggested: Introduction or Related Work
+% (2) LLM positioning paragraph  -- suggested: end of Introduction, or a
+%     short Discussion paragraph before Limitations
+% ======================================================================
+
+% ---------- (1) frontier-comparison table ----------------------------
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{lll}
+\toprule
+work & method & equation class \\
+\midrule
+Poesia et al.\ (2021)      & contrastive RL          & linear / elementary \\
+Dabelow \& Ueda (2024)     & Q-learning, symbolic    & linear \\
+\textbf{This work}         & PPO + TreeMLP           & \textbf{nonlinear + open (CoV)} \\
+\bottomrule
+\end{tabular}
+\caption{\textbf{The frontier.} Prior reinforcement-learning / trace-free
+symbolic equation solving stops at linear equations. This work extends it to
+nonlinear equations (radicals, exponentials, trigonometric functions) and to
+\emph{open} equations, which require a generative change of variables.}
+\label{tab:frontier}
+\end{table}
+
+% ---------- (2) LLM positioning paragraph ----------------------------
+\textbf{Relation to large language models.}
+Large language models can produce answers to equations of the kind we study,
+and we do not position this work as a competitor on solution accuracy. The
+contribution is orthogonal. We ask whether an agent can \emph{learn} -- with
+no supervised solution traces -- the exact symbolic transformations that
+solve an equation step by step. Every action in our setting is an exact
+algebraic operation applied by a computer-algebra backend, so a solution is a
+\emph{verified derivation} rather than a generated string: the agent cannot
+hallucinate an intermediate step, and a claimed solution either checks or it
+does not. This exact, trace-free learning setting is precisely the one
+studied by \citet{poesia2021contrastive} and \citet{dabelow2024symbolic};
+our contribution is to carry it from linear equations to nonlinear and
+generative equation solving. Whether a learned symbolic policy of this kind
+can be distilled into, or used to guide, a general language model is an
+interesting question we leave to future work.
