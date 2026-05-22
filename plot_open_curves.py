@@ -2,15 +2,24 @@
 """Open-equation learning curves -- the Fig-2 equivalent for the open
 (mixed) dataset.
 
-Three panels: coverage, test_greedy, test_beam vs training steps.
-Three curves: baseline (seed8001), anti-loop (seed9100), and the
-full-stack fresh-buffer headline run (seed14000).
+Styled to match the closed-equation headline figure (closed-equations.png):
+matplotlib categorical palette, panel titles on top, sci-notation step
+axis, single legend in the first panel.
+
+Three panels: Coverage, Test Greedy, Test Beam vs training steps.
+Two curves: baseline (seed8001) and the full-stack fresh-buffer method.
+The intermediate ablation rungs live in the ablation table, not here -- the
+figure is the before/after money shot.
+
+The full-stack curve aggregates over every seed listed for it that exists
+on disk: as the extra background seeds (16000, 17000) finish, rerunning
+this script automatically turns the single line into a mean +/- min/max
+band, matching Figure 2.
 
 The headline runs used --eval_lite, so test_beam is not in their
 learning_curves.csv; it is reconstructed by eval_checkpoint_curve.py
 into test_beam_curve.csv (column test_beam_value).
 """
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -18,21 +27,36 @@ import pandas as pd
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import seaborn as sns
+
+# Match the closed-equation figure (Fig. 2): seaborn whitegrid + despine.
+sns.set_theme(style="whitegrid")
 
 BASE = Path("data/dynamic_actions/use_relabel_constants/use_buffer/"
             "mixed_v2_easy_hidden_dim256_nenvs1/ppo-tree")
 
-# (label, seed dir, color, has_beam_in_csv)
+# (label, [seed dirs], color, test_beam_is_in_csv)
+# Colors mirror closed-equations.png: blue = baseline, red = best/full stack.
 RUNS = [
-    ("baseline (ppo-tree-rc-buf-cov)", "seed8001", "#888888", True),
-    ("+ anti-loop penalty",            "seed9100", "#1f77b4", True),
-    ("+ fresh-buffer (full stack)",    "seed14000", "#d62728", False),
+    ("baseline (ppo-tree-rc-buf-cov)", ["seed8001"], "#1f77b4", True),
+    ("full method stack",
+     ["seed14000", "seed16000", "seed17000"], "#d62728", False),
+]
+
+PANELS = [
+    ("Coverage",    "coverage",    "step"),
+    ("Test Greedy", "test_greedy", "step"),
+    ("Test Beam",   "test_beam",   "beam_step"),
 ]
 
 
-def load_run(seed_dir, has_beam):
+def load_seed(seed_dir, has_beam):
+    """Load one seed's curves; return None if the run does not exist yet."""
     d = BASE / seed_dir
-    lc = pd.read_csv(d / "learning_curves.csv")
+    lc_path = d / "learning_curves.csv"
+    if not lc_path.exists():
+        return None
+    lc = pd.read_csv(lc_path)
     out = {"step": lc["step"].values,
            "coverage": lc["coverage"].values,
            "test_greedy": lc["test_greedy"].values}
@@ -40,7 +64,6 @@ def load_run(seed_dir, has_beam):
         out["beam_step"] = lc["step"].values
         out["test_beam"] = lc["test_beam"].values
     else:
-        # reconstructed curve from checkpoint re-eval
         cf = d / "test_beam_curve.csv"
         if cf.exists():
             cc = pd.read_csv(cf)
@@ -52,30 +75,48 @@ def load_run(seed_dir, has_beam):
     return out
 
 
-def main():
-    runs = [(label, load_run(sd, hb), color) for label, sd, color, hb in RUNS]
+def aggregate(seeds, key, xkey):
+    """Mean / min / max across seeds on the first seed's x grid."""
+    series = [(s[xkey], s[key]) for s in seeds
+              if s.get(xkey) is not None and s.get(key) is not None]
+    if not series:
+        return None, None, None, None
+    grid = np.asarray(series[0][0], dtype=float)
+    stack = []
+    for x, y in series:
+        x = np.asarray(x, dtype=float)
+        y = np.asarray(y, dtype=float)
+        stack.append(y if np.array_equal(x, grid) else np.interp(grid, x, y))
+    stack = np.stack(stack, axis=0)
+    return grid, stack.mean(0), stack.min(0), stack.max(0)
 
-    fig, axes = plt.subplots(1, 3, figsize=(15, 4.2))
-    panels = [
-        ("coverage", "coverage", "step"),
-        ("test\\_greedy", "test_greedy", "step"),
-        ("test\\_beam", "test_beam", "beam_step"),
-    ]
-    for ax, (title, key, xkey) in zip(axes, panels):
-        for label, data, color in runs:
-            x = data.get(xkey)
-            y = data.get(key)
-            if x is None or y is None:
+
+def main():
+    runs = []
+    for label, seed_dirs, color, hb in RUNS:
+        seeds = [s for s in (load_seed(sd, hb) for sd in seed_dirs)
+                 if s is not None]
+        if seeds:
+            runs.append((label, seeds, color))
+
+    fig, axes = plt.subplots(1, 3, figsize=(11, 3.2), sharex=True)
+    for ax, (title, key, xkey) in zip(axes, PANELS):
+        for label, seeds, color in runs:
+            x, mean, lo, hi = aggregate(seeds, key, xkey)
+            if x is None:
                 continue
-            ax.plot(np.asarray(x) / 1e6, y, label=label, color=color, linewidth=2)
-        ax.set_xlabel("training steps (millions)")
+            n = sum(1 for s in seeds if s.get(key) is not None)
+            ax.plot(x, mean, color=color, linewidth=1.6,
+                    label=(f"{label} (n={n})" if title == "Coverage" else None))
+            if n > 1:
+                ax.fill_between(x, lo, hi, color=color, alpha=0.15)
         ax.set_title(title)
+        ax.set_xlabel("Step")
         ax.set_ylim(-0.02, 1.02)
-        ax.grid(alpha=0.3)
+        ax.ticklabel_format(style="sci", axis="x", scilimits=(0, 0))
     axes[0].set_ylabel("fraction solved")
-    axes[2].legend(fontsize=8, loc="lower right")
-    fig.suptitle("Open-equation learning curves (mixed\\_v2\\_easy, 91 test eqns)",
-                 fontsize=12)
+    axes[0].legend(loc="lower right", fontsize=8, frameon=False)
+    sns.despine(fig=fig)
     fig.tight_layout()
 
     out = Path("figures/open_eqn_curves.png")
@@ -83,13 +124,14 @@ def main():
     fig.savefig(out, dpi=150, bbox_inches="tight")
     print(f"Wrote {out}")
 
-    # Also print the final numbers for the caption
     print("\nFinal values:")
-    for label, data, _ in runs:
-        cov = data["coverage"][-1]
-        tg = data["test_greedy"][-1]
-        tb = data["test_beam"][-1] if data["test_beam"] is not None else float("nan")
-        print(f"  {label:35s}  cov={cov:.2f}  greedy={tg:.2f}  beam={tb:.2f}")
+    for label, seeds, _ in runs:
+        cov = seeds[0]["coverage"][-1]
+        tg = seeds[0]["test_greedy"][-1]
+        tb = (seeds[0]["test_beam"][-1]
+              if seeds[0]["test_beam"] is not None else float("nan"))
+        print(f"  {label:35s}  n={len(seeds)}  "
+              f"cov={cov:.2f}  greedy={tg:.2f}  beam={tb:.2f}")
 
 
 if __name__ == "__main__":

@@ -8,10 +8,11 @@ abel_level3,(base),ppo-tree,0.9630054488098652,,0.5503875968992248,,0.8010335917
 abel_level4,(base),ppo-tree,0.8296,,0.53,,0.702,,0.663,,data/abel_level4_hidden_dim64_nenvs1/summary.csv
 abel_level1,dyn,ppo,0.8125,,1.0,,1.0,,1.0,,data/dynamic_actions/abel_level1_hidden_dim256_nenvs1/summary.csv
 abel_level2,dyn,ppo-tree,1.0,0.0,0.5961538461538461,0.0271964146610211,0.8461538461538461,0.0,0.7884615384615385,0.027196414661021,data/dynamic_actions/abel_level2_hidden_dim256_nenvs1/summary.csv
-abel_level3,dyn,ppo,0.2928018353885862,0.0533502309342517,0.0404823428079242,0.0116518081468291,0.0732127476313522,0.0233036162936583,0.1068044788975021,0.0039470936218396,data/dynamic_actions/abel_level3_hidden_dim256_nenvs1/summary.csv
+abel_level3,dyn,ppo-tree,0.7378835675365644,,0.2351421188630491,,0.3540051679586563,,0.4237726098191214,,data/dynamic_actions/abel_level3_hidden_dim256_nenvs1/summary.csv
 abel_level4,dyn,ppo,0.0812,,0.018,,0.03,,0.042,,data/dynamic_actions/abel_level4_hidden_dim256_nenvs1/summary.csv
 cov_level5,dyn,ppo,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,data/dynamic_actions/cov_level5_hidden_dim256_nenvs1/summary.csv
 abel_level3,dyn+no-curr,ppo-tree,0.931459707484944,,0.4754521963824289,,0.6537467700258398,,0.6511627906976745,,data/dynamic_actions/no_curriculum/abel_level3_hidden_dim256_nenvs1/summary.csv
+poesia-full,dyn,ppo-tree,155.87,,0.735,,0.735,,0.755,,data/dynamic_actions/poesia-full_hidden_dim256_nenvs1/summary.csv
 poesia-med,dyn,ppo-tree,0.16,,0.0,,0.02,,0.02,,data/dynamic_actions/poesia-med_hidden_dim256_nenvs1/summary.csv
 poesia-small,dyn,ppo-tree,0.41,,0.0,,0.2,,0.2,,data/dynamic_actions/poesia-small_hidden_dim256_nenvs1/summary.csv
 poesia-tiny,dyn,ppo-tree,0.375,,0.25,,0.25,,0.125,,data/dynamic_actions/poesia-tiny_hidden_dim256_nenvs1/summary.csv
@@ -28,6 +29,7 @@ abel_level3,dyn+rc,ppo-tree,1.0,,0.9018087855297158,,0.8811369509043928,,0.97157
 poesia-full,dyn+rc,ppo-tree,1472.575,,0.955,,0.865,,0.96,,data/dynamic_actions/use_relabel_constants/poesia-full_hidden_dim256_nenvs1/summary.csv
 abel_level3,buf+dyn+rc,ppo-tree,0.9997132205334098,,0.8010335917312662,,0.8992248062015504,,0.896640826873385,,data/dynamic_actions/use_relabel_constants/use_buffer/abel_level3_hidden_dim256_nenvs1/summary.csv
 abel_level4,buf+dyn+rc,ppo-tree,0.9249,,0.441,,0.665,,0.64,,data/dynamic_actions/use_relabel_constants/use_buffer/abel_level4_hidden_dim256_nenvs1/summary.csv
+poesia-full,buf+dyn+rc,ppo-tree,390.96,,0.925,,0.945,,0.945,,data/dynamic_actions/use_relabel_constants/use_buffer/poesia-full_hidden_dim256_nenvs1/summary.csv
 test_cov4,buf+dyn+rc,ppo-tree,1.5,1.6311696066670338,0.40625,0.4988826801678212,0.4375,0.4771567577102638,0.5,0.4432026302139591,data/dynamic_actions/use_relabel_constants/use_buffer/test_cov4_hidden_dim256_nenvs1/summary.csv
 test_cov5,buf+dyn+rc,ppo-tree,1.19,,0.2,,0.6,,0.5,,data/dynamic_actions/use_relabel_constants/use_buffer/test_cov5_hidden_dim256_nenvs1/summary.csv
 abel_level2,buf,ppo-tree,0.9458333333333332,,0.6538461538461539,,0.7307692307692307,,0.7307692307692307,,data/use_buffer/abel_level2_hidden_dim256_nenvs1/summary.csv

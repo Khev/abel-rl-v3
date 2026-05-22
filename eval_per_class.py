@@ -33,11 +33,9 @@ SOURCES = [
 ]
 
 CKPTS = OrderedDict([
-    ("baseline_seed8001",  "data/dynamic_actions/use_relabel_constants/use_buffer/mixed_v2_easy_hidden_dim256_nenvs1/ppo-tree/seed8001/checkpoints/latest.zip"),
-    ("antiloop_seed9100",  "data/dynamic_actions/use_relabel_constants/use_buffer/mixed_v2_easy_hidden_dim256_nenvs1/ppo-tree/seed9100/checkpoints/latest.zip"),
-    ("full_seed10000",     "data/dynamic_actions/use_relabel_constants/use_buffer/mixed_v2_easy_hidden_dim256_nenvs1/ppo-tree/seed10000/checkpoints/latest.zip"),
+    ("seed14000_best",   "data/dynamic_actions/use_relabel_constants/use_buffer/mixed_v2_easy_hidden_dim256_nenvs1/ppo-tree/seed14000/checkpoints/best.zip"),
+    ("seed14000_latest", "data/dynamic_actions/use_relabel_constants/use_buffer/mixed_v2_easy_hidden_dim256_nenvs1/ppo-tree/seed14000/checkpoints/latest.zip"),
 ])
-
 TEST_FILE = "equation_templates/mixed_v2_easy/test_eqns.txt"
 
 

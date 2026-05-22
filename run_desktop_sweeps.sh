@@ -3,6 +3,15 @@
 # All scripts use the best-known config:
 #   --use_relabel_constants --use_success_replay --use_cov --use_cbrt
 #   --anti_loop_penalty 0.1 --early_stop_patience 8 --eval_lite
+#   --sr_buffer_kind fresh        (the freshness-managed buffer)
+#
+# POST-FIX status (2026-05-22): the open-equation no-output bug is fixed —
+# four CoV-path simplify() calls in env_multi_eqn.py recursed into
+# trigsimp/exptrigsimp and hung uninterruptibly (commits da264b6, dc293f6).
+# All CoV-path normalization is now expand(). Runs are hang-free.
+# Today's 5-seed laptop run with the fixed code: 3-seed mean test_beam = 0.86
+# (range 0.84-0.90), seeds 28000/30000/31000 -- supersedes the earlier
+# single-seed 0.80 headline.
 #
 # Edit paths if running outside the repo. Adjust --n_workers to match
 # desktop core count.
@@ -29,20 +38,22 @@ echo "============================================"
 echo ""
 
 # ----------------------------------------------------------------------
-# 1) Headline: 5-seed best-config on mixed_v2_easy
+# 1) Headline: 5-seed full-stack (+ fresh buffer) on mixed_v2_easy
 # ----------------------------------------------------------------------
-# Existing seed10000 hit test_beam=0.615. Replicating with 5 fresh seeds
-# gives proper error bars for the paper headline.
-echo "[1/3] 5-seed best-config on mixed_v2_easy (Ntrain=3M each)"
+# Replicates the laptop's 3-seed mean (0.86) with more seeds for tight
+# error bars. base_seed 40000 chosen to avoid collision with existing
+# seed dirs (laptop has seed28000-32000).
+echo "[1/4] 5-seed headline config on mixed_v2_easy (Ntrain=3M each)"
 $PY -u train_abel.py \
     --gen mixed_v2_easy --agent ppo-tree --action_space dynamic \
     --Ntrain 3000000 \
     --use_relabel_constants --use_success_replay --use_cov \
     --use_cbrt \
     --anti_loop_penalty 0.1 \
+    --sr_buffer_kind fresh \
     --early_stop_patience 8 \
     --eval_lite \
-    --base_seed 2000 --n_trials 5 --n_workers 5 --n_envs 1 \
+    --base_seed 40000 --n_trials 5 --n_workers 5 --n_envs 1 \
     > "$LOGDIR/easy_5seeds.log" 2>&1 &
 EASY_PID=$!
 echo "  launched PID $EASY_PID"
@@ -56,17 +67,18 @@ sleep 60
 # 10x more training equations and longer horizon. Provides the "and it
 # scales" story. Each seed takes ~24h with the speedups; total wall-clock
 # is gated by max parallelism.
-echo "[2/3] 5-seed best-config on mixed_v2_large (Ntrain=1e7 each)"
+echo "[2/4] 5-seed headline config on mixed_v2_large (Ntrain=1e7 each)"
 $PY -u train_abel.py \
     --gen mixed_v2_large --agent ppo-tree --action_space dynamic \
     --Ntrain 10000000 \
     --use_relabel_constants --use_success_replay --use_cov \
     --use_cbrt \
     --anti_loop_penalty 0.1 \
+    --sr_buffer_kind fresh \
     --early_stop_patience 8 \
     --eval_lite \
     --eval_subsample 200 \
-    --base_seed 3000 --n_trials 5 --n_workers 5 --n_envs 1 \
+    --base_seed 50000 --n_trials 5 --n_workers 5 --n_envs 1 \
     > "$LOGDIR/large_5seeds.log" 2>&1 &
 LARGE_PID=$!
 echo "  launched PID $LARGE_PID"
@@ -78,7 +90,7 @@ sleep 60
 # ----------------------------------------------------------------------
 # We saw single-seed evidence that the "fresh" buffer (drop oldest 50%
 # every 20 rollouts) beats the flat buffer. Confirm with 3 seeds.
-echo "[3/3] 3-seed fresh-buffer ablation on mixed_v2_easy"
+echo "[3/4] 3-seed fresh-buffer ablation on mixed_v2_easy"
 $PY -u train_abel.py \
     --gen mixed_v2_easy --agent ppo-tree --action_space dynamic \
     --Ntrain 3000000 \

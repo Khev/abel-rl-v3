@@ -36,7 +36,7 @@ TRAIN_DS = sys.argv[1] if len(sys.argv) > 1 else "equation_templates/cov_large"
 EPOCHS   = int(sys.argv[2]) if len(sys.argv) > 2 else 400
 SEED     = int(sys.argv[3]) if len(sys.argv) > 3 else 0
 TEST_DS  = sys.argv[4] if len(sys.argv) > 4 else TRAIN_DS
-N_AUG, BATCH = 10, 256
+N_AUG, BATCH = 30, 256   # heavy symbol-renaming augmentation regularizes the Transformer
 EQ_LEN = 48          # max equation token-sequence length
 MAX_SYM = 16         # max coefficient-symbol slots per equation
 DEC_LEN = 7          # max substitution prefix length
@@ -194,7 +194,7 @@ class PointerCov(nn.Module):
         self.tok_emb = nn.Embedding(len(EQ_TOK), hidden)
         self.pos_emb = nn.Embedding(EQ_LEN, hidden)
         enc_layer = nn.TransformerEncoderLayer(hidden, heads, hidden * 2,
-                                               batch_first=True, dropout=0.0)
+                                               batch_first=True, dropout=0.2)
         self.encoder = nn.TransformerEncoder(enc_layer, layers)
         self.dec_emb = nn.Embedding(len(TOKENS), demb)
         self.gru = nn.GRU(demb, hidden, batch_first=True)
@@ -314,7 +314,7 @@ EQ, SP, SM, DT, IT, CM = build(train_eqns)
 print(f"train tensors: {len(EQ)} examples in {time.time()-t0:.0f}s")
 
 model = PointerCov()
-opt = torch.optim.Adam(model.parameters(), lr=1e-3)
+opt = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-4)
 ce_tok = nn.CrossEntropyLoss(ignore_index=T2I["PAD"])
 
 best, best_state = 0.0, None
