@@ -9,6 +9,10 @@
 # four CoV-path simplify() calls in env_multi_eqn.py recursed into
 # trigsimp/exptrigsimp and hung uninterruptibly (commits da264b6, dc293f6).
 # All CoV-path normalization is now expand(). Runs are hang-free.
+# POST-FIX status (2026-05-23): vocab_max_id default raised 256 -> 600 in
+# utils/utils_env.py (mixed_v2_large has feature_dict max ID 511; the old
+# default crashed with IndexError in the embedding layer). mixed_v2_large
+# sweeps now work out of the box.
 # Today's 5-seed laptop run with the fixed code: 3-seed mean test_beam = 0.86
 # (range 0.84-0.90), seeds 28000/30000/31000 -- supersedes the earlier
 # single-seed 0.80 headline.

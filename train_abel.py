@@ -1433,6 +1433,7 @@ if __name__ == "__main__":
     tree_group.add_argument('--tree_K', type=int, default=3, help='Neighborhood / hop K used by TreeMLPExtractor')
     tree_group.add_argument('--tree_pooling', type=str, choices=['mean', 'max'], default='mean', help='Pooling for TreeMLPExtractor')
     tree_group.add_argument('--tree_vocab_min_id', type=int, default=-10, help='Min vocab id (ops/features) expected by extractor')
+    tree_group.add_argument('--tree_vocab_max_id', type=int, default=600, help='Max vocab id; must exceed max feature_dict id for the gen (mixed_v2_easy:163, mixed_v2_large:511, so 600 is safe for both)')
     tree_group.add_argument('--tree_pad_id', type=int, default=99, help='Padding token id')
     tree_group.add_argument('--tree_pi_sizes', type=int, nargs='+', default=[128], help='PI MLP head sizes')
     tree_group.add_argument('--tree_vf_sizes', type=int, nargs='+', default=[128], help='VF MLP head sizes')
@@ -1481,6 +1482,7 @@ if __name__ == "__main__":
         K            = args.tree_K,
         pooling      = args.tree_pooling,
         vocab_min_id = args.tree_vocab_min_id,
+        vocab_max_id = args.tree_vocab_max_id,
         pad_id       = args.tree_pad_id,
         pi_sizes     = args.tree_pi_sizes,
         vf_sizes     = args.tree_vf_sizes,

@@ -32,9 +32,13 @@ SOURCES = [
     ("abel_level3",              "abel_level3"),
 ]
 
+_P = "data/dynamic_actions/use_relabel_constants/use_buffer/mixed_v2_easy_hidden_dim256_nenvs1/ppo-tree"
 CKPTS = OrderedDict([
-    ("seed14000_best",   "data/dynamic_actions/use_relabel_constants/use_buffer/mixed_v2_easy_hidden_dim256_nenvs1/ppo-tree/seed14000/checkpoints/best.zip"),
-    ("seed14000_latest", "data/dynamic_actions/use_relabel_constants/use_buffer/mixed_v2_easy_hidden_dim256_nenvs1/ppo-tree/seed14000/checkpoints/latest.zip"),
+    ("seed28000_best", f"{_P}/seed28000/checkpoints/best.zip"),
+    ("seed29000_best", f"{_P}/seed29000/checkpoints/best.zip"),
+    ("seed30000_best", f"{_P}/seed30000/checkpoints/best.zip"),
+    ("seed31000_best", f"{_P}/seed31000/checkpoints/best.zip"),
+    ("seed32000_best", f"{_P}/seed32000/checkpoints/best.zip"),
 ])
 TEST_FILE = "equation_templates/mixed_v2_easy/test_eqns.txt"
 

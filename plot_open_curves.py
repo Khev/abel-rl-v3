@@ -40,7 +40,7 @@ BASE = Path("data/dynamic_actions/use_relabel_constants/use_buffer/"
 RUNS = [
     ("baseline (ppo-tree-rc-buf-cov)", ["seed8001"], "#1f77b4", True),
     ("full method stack",
-     ["seed14000", "seed16000", "seed17000"], "#d62728", False),
+     ["seed28000", "seed29000", "seed30000", "seed31000", "seed32000"], "#d62728", False),
 ]
 
 PANELS = [
